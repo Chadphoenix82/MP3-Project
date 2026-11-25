@@ -82,9 +82,6 @@ fun MetadataEditorScreen(
     selectedTrackId: Long?,
     currentlyPlayingTrackId: Long?,
     searchState: MetadataSearchUiState,
-    isApiUnlocked: Boolean,
-    hasApiPassword: Boolean,
-    onRequestUnlockApi: () -> Unit,
     pickedCoverOverrideUri: String?,
     onClearPickedCoverOverride: () -> Unit,
     onSelectTrack: (TrackEntity) -> Unit,
@@ -513,65 +510,23 @@ fun MetadataEditorScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    if (!isApiUnlocked) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Lock,
-                                    contentDescription = null,
-                                    tint = photonColors.goldBadge
-                                )
-                                Column {
-                                    Text(
-                                        text = "External Metadata API Locked",
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                    )
-                                    Text(
-                                        text = if (hasApiPassword) {
-                                            "Enter your password to access web metadata lookup. Local tag editing works anytime."
-                                        } else {
-                                            "Set a password to unlock web metadata lookup. Local tag editing works anytime."
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            OutlinedButton(
-                                onClick = onRequestUnlockApi,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.testTag("editor_unlock_api_btn")
-                            ) {
-                                Text(if (hasApiPassword) "Unlock" else "Set Password")
-                            }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = photonColors.photonGlow)
+                        Column {
+                            Text(
+                                text = "Exact Web Metadata Auto-Complete",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Cross-verifies official releases & catalog tags for exact metadata",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    } else {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = photonColors.photonGlow)
-                            Column {
-                                Text(
-                                    text = "Exact Web Metadata Auto-Complete",
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                )
-                                Text(
-                                    text = "Cross-verifies official releases & catalog tags for exact metadata",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -758,7 +713,6 @@ fun MetadataEditorScreen(
                                 }
                             }
                         }
-                    }
                     }
                 }
             }

@@ -10,6 +10,7 @@ import com.example.data.network.GitHubUpdateChecker
 import com.example.data.network.MetadataAutoCompleteRepository
 import com.example.data.prefs.SettingsRepository
 import com.example.player.PhotonPlayerController
+import com.example.player.ReplayGainAnalyzer
 
 class PhotonApplication : Application() {
 
@@ -30,7 +31,8 @@ class PhotonApplication : Application() {
         settingsRepository = SettingsRepository(this)
         gitHubUpdateChecker = GitHubUpdateChecker(this)
         val metadataRepository = MetadataAutoCompleteRepository()
-        val audioImporter = AudioImporter(this)
+        val replayGainAnalyzer = ReplayGainAnalyzer(this)
+        val audioImporter = AudioImporter(this, replayGainAnalyzer)
         val wavGenerator = StudioWavGenerator(this)
         val folderMonitorManager = FolderMonitorManager(
             context = this,
@@ -52,7 +54,8 @@ class PhotonApplication : Application() {
             metadataRepository = metadataRepository,
             folderMonitorManager = folderMonitorManager,
             wavGenerator = wavGenerator,
-            settingsRepository = settingsRepository
+            settingsRepository = settingsRepository,
+            replayGainAnalyzer = replayGainAnalyzer
         )
         playerController = PhotonPlayerController(this)
         libraryRepository.startFolderMonitoring()

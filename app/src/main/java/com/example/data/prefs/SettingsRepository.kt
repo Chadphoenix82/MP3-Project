@@ -16,6 +16,7 @@ import com.example.data.model.CrossfadeCurveShape
 import com.example.data.model.EqualizerPreset
 import com.example.data.model.OutputRouteCategory
 import com.example.data.model.PhotonEqPresets
+import com.example.data.model.ReplayGainMode
 import com.example.data.model.ReverbSpacePreset
 import com.example.data.model.SortDirection
 import com.example.data.model.SortOption
@@ -79,6 +80,11 @@ data class AppSettings(
     val preAmpDb: Float = 0f,
     val softLimiterEnabled: Boolean = true,
     val loudnessNormalizerEnabled: Boolean = false,
+    val replayGainMode: ReplayGainMode = ReplayGainMode.TRACK,
+    val replayGainTargetLufs: Float = -14f,
+    val replayGainPreAmpDb: Float = 0f,
+    val replayGainFallbackPreAmpDb: Float = 0f,
+    val preventClipping: Boolean = true,
     val stereoBalance: Float = 0f,
     val monoAudioEnabled: Boolean = false,
     val crossfeedStrength: Float = 0f,
@@ -100,7 +106,12 @@ data class AppSettings(
         monoAudioEnabled = monoAudioEnabled,
         crossfeedStrength = crossfeedStrength,
         reverbPreset = reverbPreset,
-        trackGainOffsetDb = trackGainOffsetDb
+        trackGainOffsetDb = trackGainOffsetDb,
+        replayGainMode = replayGainMode,
+        replayGainTargetLufs = replayGainTargetLufs,
+        replayGainPreAmpDb = replayGainPreAmpDb,
+        replayGainFallbackPreAmpDb = replayGainFallbackPreAmpDb,
+        preventClipping = preventClipping
     )
 
     fun allEqPresets(): List<EqualizerPreset> = PhotonEqPresets.builtIn + customEqPresets
@@ -152,6 +163,11 @@ class SettingsRepository(private val context: Context) {
         val PRE_AMP_DB = floatPreferencesKey("pre_amp_db")
         val SOFT_LIMITER = booleanPreferencesKey("soft_limiter")
         val LOUDNESS_NORMALIZER = booleanPreferencesKey("loudness_normalizer")
+        val REPLAY_GAIN_MODE = stringPreferencesKey("replay_gain_mode")
+        val REPLAY_GAIN_TARGET_LUFS = floatPreferencesKey("replay_gain_target_lufs")
+        val REPLAY_GAIN_PRE_AMP_DB = floatPreferencesKey("replay_gain_pre_amp_db")
+        val REPLAY_GAIN_FALLBACK_PRE_AMP_DB = floatPreferencesKey("replay_gain_fallback_pre_amp_db")
+        val PREVENT_CLIPPING = booleanPreferencesKey("prevent_clipping")
         val STEREO_BALANCE = floatPreferencesKey("stereo_balance")
         val MONO_AUDIO = booleanPreferencesKey("mono_audio")
         val CROSSFEED_STRENGTH = floatPreferencesKey("crossfeed_strength")
@@ -216,6 +232,10 @@ class SettingsRepository(private val context: Context) {
             WidgetThemeMode.valueOf(prefs[Keys.WIDGET_THEME_MODE] ?: WidgetThemeMode.APP_THEME.name)
         }.getOrDefault(WidgetThemeMode.APP_THEME)
 
+        val replayGainMode = runCatching {
+            ReplayGainMode.valueOf(prefs[Keys.REPLAY_GAIN_MODE] ?: ReplayGainMode.TRACK.name)
+        }.getOrDefault(ReplayGainMode.TRACK)
+
         AppSettings(
             darkMode = prefs[Keys.DARK_MODE] ?: true,
             cosmicThemeSkin = cosmicSkin,
@@ -254,6 +274,11 @@ class SettingsRepository(private val context: Context) {
             preAmpDb = (prefs[Keys.PRE_AMP_DB] ?: 0f).coerceIn(-12f, 12f),
             softLimiterEnabled = prefs[Keys.SOFT_LIMITER] ?: true,
             loudnessNormalizerEnabled = prefs[Keys.LOUDNESS_NORMALIZER] ?: false,
+            replayGainMode = replayGainMode,
+            replayGainTargetLufs = (prefs[Keys.REPLAY_GAIN_TARGET_LUFS] ?: -14f).coerceIn(-20f, -10f),
+            replayGainPreAmpDb = (prefs[Keys.REPLAY_GAIN_PRE_AMP_DB] ?: 0f).coerceIn(-6f, 6f),
+            replayGainFallbackPreAmpDb = (prefs[Keys.REPLAY_GAIN_FALLBACK_PRE_AMP_DB] ?: 0f).coerceIn(-6f, 6f),
+            preventClipping = prefs[Keys.PREVENT_CLIPPING] ?: true,
             stereoBalance = (prefs[Keys.STEREO_BALANCE] ?: 0f).coerceIn(-1f, 1f),
             monoAudioEnabled = prefs[Keys.MONO_AUDIO] ?: false,
             crossfeedStrength = (prefs[Keys.CROSSFEED_STRENGTH] ?: 0f).coerceIn(0f, 1f),
@@ -477,6 +502,26 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setLoudnessNormalizerEnabled(enabled: Boolean) {
         context.photonDataStore.edit { it[Keys.LOUDNESS_NORMALIZER] = enabled }
+    }
+
+    suspend fun setReplayGainMode(mode: ReplayGainMode) {
+        context.photonDataStore.edit { it[Keys.REPLAY_GAIN_MODE] = mode.name }
+    }
+
+    suspend fun setReplayGainTargetLufs(lufs: Float) {
+        context.photonDataStore.edit { it[Keys.REPLAY_GAIN_TARGET_LUFS] = lufs.coerceIn(-20f, -10f) }
+    }
+
+    suspend fun setReplayGainPreAmpDb(db: Float) {
+        context.photonDataStore.edit { it[Keys.REPLAY_GAIN_PRE_AMP_DB] = db.coerceIn(-6f, 6f) }
+    }
+
+    suspend fun setReplayGainFallbackPreAmpDb(db: Float) {
+        context.photonDataStore.edit { it[Keys.REPLAY_GAIN_FALLBACK_PRE_AMP_DB] = db.coerceIn(-6f, 6f) }
+    }
+
+    suspend fun setPreventClipping(enabled: Boolean) {
+        context.photonDataStore.edit { it[Keys.PREVENT_CLIPPING] = enabled }
     }
 
     suspend fun setStereoBalance(balance: Float) {

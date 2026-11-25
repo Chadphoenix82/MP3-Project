@@ -30,8 +30,10 @@ import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Hearing
+import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Speaker
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Tune
@@ -45,6 +47,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -85,6 +88,10 @@ import com.example.data.model.AudioSignalInfo
 import com.example.data.model.EqualizerPreset
 import com.example.data.model.OutputRouteCategory
 import com.example.data.model.PhotonEqPresets
+import com.example.data.model.ReplayGainCalculator
+import com.example.data.model.ReplayGainMode
+import com.example.data.model.ReplayGainScanProgress
+import com.example.data.model.ReplayGainSource
 import com.example.data.model.ReverbSpacePreset
 import com.example.data.prefs.AppSettings
 import com.example.player.AudioSpectrumFrame
@@ -100,6 +107,8 @@ fun EqualizerScreen(
     telemetry: EqTelemetry,
     signalInfo: AudioSignalInfo,
     currentTrack: TrackEntity?,
+    allTracks: List<TrackEntity>,
+    replayGainScanProgress: ReplayGainScanProgress,
     spectrumFlow: StateFlow<AudioSpectrumFrame>,
     onToggleEq: (Boolean) -> Unit,
     onSelectPreset: (EqualizerPreset) -> Unit,
@@ -117,6 +126,12 @@ fun EqualizerScreen(
     onSetAutoEqByOutputEnabled: (Boolean) -> Unit,
     onSetOutputRouteEqPreset: (OutputRouteCategory, String) -> Unit,
     onUpdateTrackSoundProfile: (TrackEntity, Float, String?) -> Unit,
+    onSetReplayGainMode: (ReplayGainMode) -> Unit,
+    onSetReplayGainTargetLufs: (Float) -> Unit,
+    onSetReplayGainPreAmpDb: (Float) -> Unit,
+    onSetPreventClipping: (Boolean) -> Unit,
+    onScanLibraryLoudness: (Boolean) -> Unit,
+    onScanCurrentTrackLoudness: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val photonColors = LocalPhotonColors.current
@@ -618,6 +633,417 @@ fun EqualizerScreen(
                         allPresets = allPresets,
                         onSelect = { onSetOutputRouteEqPreset(OutputRouteCategory.SPEAKER, it) }
                     )
+                }
+            }
+        }
+
+        // 6B. ReplayGain 2.0 & ITU-R BS.1770-4 LUFS Normalization Card
+        item(key = "replaygain_lufs_card") {
+            val analyzedTrackCount = remember(allTracks) {
+                allTracks.count { it.replayGainTrackDb != null || it.integratedLufs != null }
+            }
+            val effectiveRg = remember(
+                currentTrack,
+                settings.replayGainMode,
+                settings.replayGainTargetLufs,
+                settings.replayGainPreAmpDb,
+                settings.replayGainFallbackPreAmpDb,
+                settings.preventClipping
+            ) {
+                if (currentTrack == null) null
+                else ReplayGainCalculator.computeEffectiveGain(
+                    mode = settings.replayGainMode,
+                    targetLufs = settings.replayGainTargetLufs,
+                    rgPreAmpDb = settings.replayGainPreAmpDb,
+                    fallbackPreAmpDb = settings.replayGainFallbackPreAmpDb,
+                    preventClipping = settings.preventClipping,
+                    trackGainDb = currentTrack.replayGainTrackDb,
+                    albumGainDb = currentTrack.replayGainAlbumDb,
+                    trackPeak = currentTrack.replayGainTrackPeak,
+                    albumPeak = currentTrack.replayGainAlbumPeak,
+                    integratedLufs = currentTrack.integratedLufs,
+                    sourceCode = currentTrack.replayGainSource
+                )
+            }
+            val rgActive = settings.replayGainMode != ReplayGainMode.OFF
+            val rgAccent = if (rgActive) photonColors.losslessBadge else MaterialTheme.colorScheme.onSurfaceVariant
+
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = photonColors.glassSurface,
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (rgActive) photonColors.losslessBadge.copy(alpha = 0.5f) else photonColors.cardBorder
+                ),
+                modifier = Modifier.testTag("replaygain_lufs_card")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Header + Active Target Status Pill
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.GraphicEq,
+                                contentDescription = null,
+                                tint = rgAccent
+                            )
+                            Column {
+                                Text(
+                                    text = "REPLAYGAIN & LUFS ENGINE",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = rgAccent
+                                )
+                                Text(
+                                    text = "ITU-R BS.1770-4 loudness & tag-based peak normalization",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = rgAccent.copy(alpha = 0.16f),
+                            border = BorderStroke(0.8.dp, rgAccent.copy(alpha = 0.55f))
+                        ) {
+                            Text(
+                                text = if (rgActive) "${settings.replayGainTargetLufs.roundToInt()} LUFS" else "OFF",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = rgAccent,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    // Mode Selector: Off / Track / Album
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ReplayGainMode.entries.forEach { mode ->
+                            val selected = settings.replayGainMode == mode
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onSetReplayGainMode(mode)
+                                },
+                                label = {
+                                    Text(
+                                        text = mode.label,
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
+                                    )
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("replaygain_mode_${mode.name.lowercase()}"),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = photonColors.losslessBadge.copy(alpha = 0.22f),
+                                    selectedLabelColor = photonColors.losslessBadge
+                                )
+                            )
+                        }
+                    }
+
+                    // Live Track Loudness & Applied Gain Readout
+                    if (currentTrack != null && effectiveRg != null) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f),
+                            border = BorderStroke(0.8.dp, photonColors.cardBorder.copy(alpha = 0.7f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = currentTrack.title,
+                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = when (effectiveRg.source) {
+                                                ReplayGainSource.TAG -> "Source: Embedded ReplayGain Tag"
+                                                ReplayGainSource.LUFS_SCAN -> "Source: BS.1770-4 Audio Scan"
+                                                ReplayGainSource.NONE -> "Not yet scanned — tap Analyze"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (rgActive) photonColors.photonGlow.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
+                                        border = BorderStroke(
+                                            0.8.dp,
+                                            if (rgActive) photonColors.photonGlow.copy(alpha = 0.6f) else photonColors.cardBorder
+                                        )
+                                    ) {
+                                        Text(
+                                            text = if (rgActive) formatDbSigned(effectiveRg.appliedGainDb) else "Bypass",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = if (rgActive) photonColors.photonGlow else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Loudness: " + (effectiveRg.measuredLufs?.let { String.format("%.1f LUFS", it) } ?: "—"),
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Peak: ${ReplayGainCalculator.linearPeakToDbfs(effectiveRg.peakLinear)}",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (effectiveRg.clippingPrevented) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Shield,
+                                                contentDescription = "Clipping protection active",
+                                                tint = photonColors.goldBadge,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Text(
+                                                text = "Clip-Safe active (capped from ${formatDbSigned(effectiveRg.rawTargetGainDb)})",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = photonColors.goldBadge
+                                            )
+                                        }
+                                    } else {
+                                        Text(
+                                            text = if (effectiveRg.isUsingAlbumGain) "Using Album Gain" else "Using Track Gain",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    TextButton(
+                                        onClick = onScanCurrentTrackLoudness,
+                                        enabled = !replayGainScanProgress.isScanning,
+                                        modifier = Modifier.testTag("replaygain_scan_current_button")
+                                    ) {
+                                        Text(
+                                            text = if (effectiveRg.source == ReplayGainSource.NONE) "Analyze Track" else "Re-Analyze",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Target Loudness Reference Presets & Fine Slider (-20..-10 LUFS)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Target Perceived Loudness", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                text = String.format("%.1f LUFS", settings.replayGainTargetLufs),
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = photonColors.losslessBadge
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(-18f to "RG2 -18", -16f to "Apple -16", -14f to "Stream -14", -12f to "Loud -12").forEach { (presetLufs, label) ->
+                                val isSelected = abs(settings.replayGainTargetLufs - presetLufs) < 0.25f
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { onSetReplayGainTargetLufs(presetLufs) },
+                                    label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("replaygain_target_${presetLufs.toInt()}"),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = photonColors.photonGlow.copy(alpha = 0.2f),
+                                        selectedLabelColor = photonColors.photonGlow
+                                    )
+                                )
+                            }
+                        }
+                        Slider(
+                            value = settings.replayGainTargetLufs,
+                            onValueChange = { raw ->
+                                val snapped = (raw * 2f).roundToInt() / 2f
+                                onSetReplayGainTargetLufs(snapped)
+                            },
+                            valueRange = -20f..-10f,
+                            enabled = rgActive,
+                            modifier = Modifier.testTag("replaygain_target_lufs_slider"),
+                            colors = SliderDefaults.colors(
+                                thumbColor = photonColors.losslessBadge,
+                                activeTrackColor = photonColors.losslessBadge
+                            )
+                        )
+                    }
+
+                    // ReplayGain Pre-Amp (-6..+6 dB) with 0 dB haptic detent
+                    var lastRgPreAmp by remember { mutableFloatStateOf(settings.replayGainPreAmpDb) }
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("ReplayGain Pre-Amp Trim", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                text = formatDbSigned(settings.replayGainPreAmpDb),
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = photonColors.photonGlow
+                            )
+                        }
+                        Slider(
+                            value = settings.replayGainPreAmpDb,
+                            onValueChange = { raw ->
+                                val snapped = if (abs(raw) < 0.35f) 0f else (raw * 2f).roundToInt() / 2f
+                                if ((lastRgPreAmp != 0f && snapped == 0f) || (lastRgPreAmp * snapped < 0f)) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                }
+                                lastRgPreAmp = snapped
+                                onSetReplayGainPreAmpDb(snapped)
+                            },
+                            valueRange = -6f..6f,
+                            enabled = rgActive,
+                            modifier = Modifier.testTag("replaygain_preamp_slider"),
+                            colors = SliderDefaults.colors(
+                                thumbColor = photonColors.photonGlow,
+                                activeTrackColor = photonColors.photonGlow
+                            )
+                        )
+                    }
+
+                    // Peak Clipping Protection Switch
+                    DspToggleRow(
+                        title = "Peak Clipping Protection",
+                        subtitle = "Caps boost using measured track/album peak (-0.1 dBFS ceiling)",
+                        checked = settings.preventClipping,
+                        onCheckedChange = onSetPreventClipping,
+                        tag = "replaygain_prevent_clipping_switch"
+                    )
+
+                    HorizontalDivider(color = photonColors.cardBorder.copy(alpha = 0.5f))
+
+                    // Library Batch Loudness Scanner Footer
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Library Loudness Index",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = "$analyzedTrackCount / ${allTracks.size} tracks analyzed",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = if (analyzedTrackCount == allTracks.size && allTracks.isNotEmpty()) {
+                                    photonColors.losslessBadge
+                                } else {
+                                    photonColors.photonGlow
+                                }
+                            )
+                        }
+
+                        if (replayGainScanProgress.isScanning) {
+                            val fraction = if (replayGainScanProgress.totalCount > 0) {
+                                replayGainScanProgress.scannedCount.toFloat() / replayGainScanProgress.totalCount.toFloat()
+                            } else 0f
+                            LinearProgressIndicator(
+                                progress = { fraction.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .testTag("replaygain_scan_progress"),
+                                color = photonColors.losslessBadge,
+                                trackColor = photonColors.cardBorder.copy(alpha = 0.4f)
+                            )
+                            Text(
+                                text = "Scanning ${replayGainScanProgress.scannedCount}/${replayGainScanProgress.totalCount}: ${replayGainScanProgress.currentTrackTitle}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = photonColors.losslessBadge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = { onScanLibraryLoudness(false) },
+                                enabled = !replayGainScanProgress.isScanning && allTracks.isNotEmpty(),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("replaygain_scan_library_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Radar,
+                                    contentDescription = "Scan unscanned tracks for ReplayGain and LUFS",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Scan Library")
+                            }
+                            OutlinedButton(
+                                onClick = { onScanLibraryLoudness(true) },
+                                enabled = !replayGainScanProgress.isScanning && allTracks.isNotEmpty(),
+                                modifier = Modifier.testTag("replaygain_rescan_all_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.RestartAlt,
+                                    contentDescription = "Force rescan all tracks for LUFS",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Rescan")
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -34,7 +34,13 @@ data class TrackEntity(
     val metadataEnriched: Boolean = false,
     val isFavorite: Boolean = false,
     val customGainDb: Float = 0f,
-    val preferredEqPreset: String? = null
+    val preferredEqPreset: String? = null,
+    val replayGainTrackDb: Float? = null,
+    val replayGainAlbumDb: Float? = null,
+    val replayGainTrackPeak: Float? = null,
+    val replayGainAlbumPeak: Float? = null,
+    val integratedLufs: Float? = null,
+    val replayGainSource: String = ""
 )
 
 @Entity(tableName = "playlists")

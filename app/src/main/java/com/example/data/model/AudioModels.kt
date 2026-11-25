@@ -167,6 +167,126 @@ enum class WidgetThemeMode(val label: String) {
     ADAPTIVE_ARTWORK("Adaptive Album Art")
 }
 
+enum class ReplayGainMode(val label: String, val subtitle: String) {
+    OFF("Off", "Original mastered loudness"),
+    TRACK("Track", "Normalize every song to target LUFS"),
+    ALBUM("Album", "Preserve relative album dynamics")
+}
+
+enum class ReplayGainSource(val code: String, val label: String) {
+    NONE("", "Unscanned"),
+    TAG("TAG", "RG Tag"),
+    LUFS_SCAN("LUFS_SCAN", "BS.1770 LUFS");
+
+    companion object {
+        fun fromCode(code: String?): ReplayGainSource = when (code?.uppercase()) {
+            "TAG" -> TAG
+            "LUFS_SCAN" -> LUFS_SCAN
+            else -> NONE
+        }
+    }
+}
+
+data class ReplayGainResult(
+    val trackGainDb: Float? = null,
+    val albumGainDb: Float? = null,
+    val trackPeak: Float? = null,
+    val albumPeak: Float? = null,
+    val integratedLufs: Float? = null,
+    val source: ReplayGainSource = ReplayGainSource.NONE
+) {
+    val hasData: Boolean
+        get() = trackGainDb != null || albumGainDb != null || integratedLufs != null
+}
+
+data class ReplayGainScanProgress(
+    val isScanning: Boolean = false,
+    val scannedCount: Int = 0,
+    val totalCount: Int = 0,
+    val currentTrackTitle: String = ""
+)
+
+data class EffectiveReplayGain(
+    val appliedGainDb: Float = 0f,
+    val rawTargetGainDb: Float = 0f,
+    val measuredLufs: Float? = null,
+    val peakLinear: Float? = null,
+    val clippingPrevented: Boolean = false,
+    val isUsingAlbumGain: Boolean = false,
+    val source: ReplayGainSource = ReplayGainSource.NONE
+)
+
+object ReplayGainCalculator {
+    /** ReplayGain 2.0 standard reference loudness is -18.0 LUFS. */
+    const val RG2_REFERENCE_LUFS = -18.0f
+
+    fun computeEffectiveGain(
+        mode: ReplayGainMode,
+        targetLufs: Float,
+        rgPreAmpDb: Float,
+        fallbackPreAmpDb: Float,
+        preventClipping: Boolean,
+        trackGainDb: Float?,
+        albumGainDb: Float?,
+        trackPeak: Float?,
+        albumPeak: Float?,
+        integratedLufs: Float?,
+        sourceCode: String?
+    ): EffectiveReplayGain {
+        val source = ReplayGainSource.fromCode(sourceCode)
+        val derivedLufs = integratedLufs ?: trackGainDb?.let { RG2_REFERENCE_LUFS - it }
+        if (mode == ReplayGainMode.OFF) {
+            return EffectiveReplayGain(
+                appliedGainDb = 0f,
+                rawTargetGainDb = 0f,
+                measuredLufs = derivedLufs,
+                peakLinear = trackPeak ?: albumPeak,
+                clippingPrevented = false,
+                isUsingAlbumGain = false,
+                source = source
+            )
+        }
+
+        val useAlbum = mode == ReplayGainMode.ALBUM && albumGainDb != null
+        val activePeak = if (useAlbum) (albumPeak ?: trackPeak) else (trackPeak ?: albumPeak)
+        val hasMeasuredData = (useAlbum && albumGainDb != null) || trackGainDb != null || integratedLufs != null
+
+        val rawGain = when {
+            useAlbum -> albumGainDb!! + (targetLufs - RG2_REFERENCE_LUFS) + rgPreAmpDb
+            trackGainDb != null -> trackGainDb + (targetLufs - RG2_REFERENCE_LUFS) + rgPreAmpDb
+            integratedLufs != null -> (targetLufs - integratedLufs) + rgPreAmpDb
+            else -> fallbackPreAmpDb
+        }.coerceIn(-15f, 15f)
+
+        var applied = rawGain
+        var clipped = false
+        if (preventClipping && activePeak != null && activePeak > 0.001f) {
+            // Keep peak ceiling at 0.988 (~ -0.1 dBFS) to prevent inter-sample clipping
+            val maxSafeGainDb = (20.0 * kotlin.math.log10(0.988 / activePeak.toDouble())).toFloat()
+            if (applied > maxSafeGainDb) {
+                applied = maxSafeGainDb.coerceIn(-15f, 15f)
+                clipped = true
+            }
+        }
+
+        return EffectiveReplayGain(
+            appliedGainDb = applied,
+            rawTargetGainDb = rawGain,
+            measuredLufs = derivedLufs,
+            peakLinear = activePeak,
+            clippingPrevented = clipped,
+            isUsingAlbumGain = useAlbum,
+            source = if (hasMeasuredData) source else ReplayGainSource.NONE
+        )
+    }
+
+    fun linearPeakToDbfs(peak: Float?): String {
+        if (peak == null || peak <= 0.00001f) return "—"
+        val dbfs = (20.0 * kotlin.math.log10(peak.toDouble())).toFloat()
+        return String.format("%+.1f dBFS", dbfs)
+    }
+}
+
 data class StudioDspConfig(
     val preAmpDb: Float = 0f,
     val softLimiterEnabled: Boolean = true,
@@ -175,7 +295,13 @@ data class StudioDspConfig(
     val monoAudioEnabled: Boolean = false,
     val crossfeedStrength: Float = 0f, // 0f .. 1f
     val reverbPreset: ReverbSpacePreset = ReverbSpacePreset.OFF,
-    val trackGainOffsetDb: Float = 0f
+    val trackGainOffsetDb: Float = 0f,
+    val replayGainMode: ReplayGainMode = ReplayGainMode.TRACK,
+    val replayGainTargetLufs: Float = -14f,
+    val replayGainPreAmpDb: Float = 0f,
+    val replayGainFallbackPreAmpDb: Float = 0f,
+    val preventClipping: Boolean = true,
+    val activeReplayGainDb: Float = 0f
 )
 
 data class EqualizerPreset(

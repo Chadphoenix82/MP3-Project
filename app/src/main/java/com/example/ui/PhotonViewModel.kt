@@ -19,6 +19,8 @@ import com.example.data.model.EqualizerPreset
 import com.example.data.model.MetadataSuggestion
 import com.example.data.model.OutputRouteCategory
 import com.example.data.model.PhotonEqPresets
+import com.example.data.model.ReplayGainMode
+import com.example.data.model.ReplayGainScanProgress
 import com.example.data.model.ReverbSpacePreset
 import com.example.data.model.SortDirection
 import com.example.data.model.SortOption
@@ -75,6 +77,7 @@ class PhotonViewModel(
     val playbackState: StateFlow<PlaybackUiState> = playerController.playbackState
     val spectrumState: StateFlow<com.example.player.AudioSpectrumFrame> = playerController.spectrumState
     val monitorStatus: StateFlow<FolderMonitorStatus> = libraryRepository.monitorStatus
+    val replayGainScanProgress: StateFlow<ReplayGainScanProgress> = libraryRepository.replayGainScanProgress
 
     val watchedFolders: StateFlow<List<WatchedFolderEntity>> = libraryRepository.watchedFolders.stateIn(
         scope = viewModelScope,
@@ -262,6 +265,7 @@ class PhotonViewModel(
     private var lastAutoAppendedForTrackId: Long? = null
     private var lastAppliedOutputCategory: OutputRouteCategory? = null
     private var lastAppliedTrackProfileId: Long? = null
+    private val autoScannedTrackIds = mutableSetOf<Long>()
 
     init {
         // Keep PlaybackService synced with DataStore playback, crossfade, 10-band EQ, Studio DSP & Widgets
@@ -330,10 +334,29 @@ class PhotonViewModel(
                     lastAppliedOutputCategory = null
                 }
 
-                // 2) Per-Track Sound Profile recall when track changes
+                // 2) Per-Track Sound Profile recall & On-Demand ReplayGain/LUFS auto-scan when track changes
                 if (current != null && current.id != lastAppliedTrackProfileId) {
                     lastAppliedTrackProfileId = current.id
                     playerController.updateStudioDsp(currentSettings.toStudioDspConfig(current.customGainDb))
+                    if (
+                        currentSettings.replayGainMode != ReplayGainMode.OFF &&
+                        current.replayGainTrackDb == null &&
+                        current.integratedLufs == null &&
+                        autoScannedTrackIds.add(current.id)
+                    ) {
+                        val targetTrack = current
+                        viewModelScope.launch {
+                            val updated = libraryRepository.scanTrackLoudness(targetTrack, forceAudioScan = false)
+                            if (updated.replayGainTrackDb != null || updated.integratedLufs != null) {
+                                playerController.updateTrackInQueue(updated)
+                                if (playbackState.value.currentTrack?.id == updated.id) {
+                                    playerController.updateStudioDsp(
+                                        settings.value.toStudioDspConfig(updated.customGainDb)
+                                    )
+                                }
+                            }
+                        }
+                    }
                     val trackEqName = current.preferredEqPreset
                     if (!trackEqName.isNullOrBlank()) {
                         val matched = currentSettings.allEqPresets()
@@ -754,10 +777,6 @@ class PhotonViewModel(
     }
 
     fun searchMetadataForEditor(query: String = _editorSearchState.value.query, targetTrack: TrackEntity? = null) {
-        if (!_isApiUnlocked.value) {
-            _snackbarMessages.tryEmit("API access is password-protected — unlock API first")
-            return
-        }
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
         val resolvedTrack = targetTrack ?: allTracks.value.firstOrNull { it.id == _editorSelectedTrackId.value }
@@ -857,10 +876,6 @@ class PhotonViewModel(
     }
 
     fun performMetadataSearch(query: String = _metadataUiState.value.query) {
-        if (!_isApiUnlocked.value) {
-            _snackbarMessages.tryEmit("API access is password-protected — unlock API first")
-            return
-        }
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
         val target = _metadataUiState.value.targetTrack
@@ -987,9 +1002,8 @@ class PhotonViewModel(
 
     fun lockApiAccess() {
         _isApiUnlocked.value = false
-        _editorSearchState.value = _editorSearchState.value.copy(results = emptyList(), errorMessage = null)
         _updateCheckStatus.value = null
-        _snackbarMessages.tryEmit("API access locked and hidden")
+        _snackbarMessages.tryEmit("Release API access locked and hidden")
     }
 
     // ---- Privacy-First GitHub Update Checker ----
@@ -1290,6 +1304,77 @@ class PhotonViewModel(
                             settingsRepository.setSpatialEffects(matched.bassBoost, matched.virtualizer)
                         }
                 }
+            }
+        }
+    }
+
+    // ---- ReplayGain 2.0 & LUFS Normalization Controls ----
+
+    fun setReplayGainMode(mode: ReplayGainMode) {
+        viewModelScope.launch {
+            settingsRepository.setReplayGainMode(mode)
+            val current = playbackState.value.currentTrack
+            if (
+                mode != ReplayGainMode.OFF &&
+                current != null &&
+                current.replayGainTrackDb == null &&
+                current.integratedLufs == null &&
+                autoScannedTrackIds.add(current.id)
+            ) {
+                val updated = libraryRepository.scanTrackLoudness(current, forceAudioScan = false)
+                if (updated.replayGainTrackDb != null || updated.integratedLufs != null) {
+                    playerController.updateTrackInQueue(updated)
+                }
+            }
+        }
+    }
+
+    fun setReplayGainTargetLufs(lufs: Float) {
+        viewModelScope.launch { settingsRepository.setReplayGainTargetLufs(lufs) }
+    }
+
+    fun setReplayGainPreAmpDb(db: Float) {
+        viewModelScope.launch { settingsRepository.setReplayGainPreAmpDb(db) }
+    }
+
+    fun setReplayGainFallbackPreAmpDb(db: Float) {
+        viewModelScope.launch { settingsRepository.setReplayGainFallbackPreAmpDb(db) }
+    }
+
+    fun setPreventClipping(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setPreventClipping(enabled) }
+    }
+
+    fun scanLibraryLoudness(forceRescan: Boolean = false) {
+        viewModelScope.launch {
+            if (forceRescan) autoScannedTrackIds.clear()
+            val count = libraryRepository.scanLibraryLoudness(forceRescan = forceRescan)
+            val currentId = playbackState.value.currentTrack?.id
+            if (currentId != null) {
+                allTracks.value.firstOrNull { it.id == currentId }?.let { updated ->
+                    playerController.updateTrackInQueue(updated)
+                    playerController.updateStudioDsp(settings.value.toStudioDspConfig(updated.customGainDb))
+                }
+            }
+            if (count > 0) {
+                _snackbarMessages.tryEmit("ReplayGain / LUFS analyzed $count track(s)")
+            } else {
+                _snackbarMessages.tryEmit("All library tracks already have ReplayGain / LUFS data")
+            }
+        }
+    }
+
+    fun scanCurrentTrackLoudness() {
+        val current = playbackState.value.currentTrack ?: return
+        viewModelScope.launch {
+            val updated = libraryRepository.scanTrackLoudness(current, forceAudioScan = true)
+            playerController.updateTrackInQueue(updated)
+            playerController.updateStudioDsp(settings.value.toStudioDspConfig(updated.customGainDb))
+            val lufsText = updated.integratedLufs?.let { String.format("%.1f LUFS", it) }
+            if (lufsText != null) {
+                _snackbarMessages.tryEmit("\"${updated.title}\" measured at $lufsText")
+            } else {
+                _snackbarMessages.tryEmit("Could not decode audio peaks for \"${updated.title}\"")
             }
         }
     }

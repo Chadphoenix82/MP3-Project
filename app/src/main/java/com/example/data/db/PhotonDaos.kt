@@ -81,6 +81,31 @@ interface TrackDao {
     @Query("UPDATE tracks SET customGainDb = :customGainDb, preferredEqPreset = :preferredEqPreset WHERE id = :trackId")
     suspend fun updateTrackSoundProfile(trackId: Long, customGainDb: Float, preferredEqPreset: String?)
 
+    @Query(
+        """
+        UPDATE tracks SET
+            replayGainTrackDb = :trackGainDb,
+            replayGainAlbumDb = COALESCE(:albumGainDb, replayGainAlbumDb),
+            replayGainTrackPeak = :trackPeak,
+            replayGainAlbumPeak = COALESCE(:albumPeak, replayGainAlbumPeak),
+            integratedLufs = :integratedLufs,
+            replayGainSource = :source
+        WHERE id = :trackId
+        """
+    )
+    suspend fun updateTrackLoudness(
+        trackId: Long,
+        trackGainDb: Float?,
+        albumGainDb: Float?,
+        trackPeak: Float?,
+        albumPeak: Float?,
+        integratedLufs: Float?,
+        source: String
+    )
+
+    @Query("UPDATE tracks SET replayGainAlbumDb = :albumGainDb, replayGainAlbumPeak = :albumPeak WHERE album = :albumName")
+    suspend fun updateAlbumLoudness(albumName: String, albumGainDb: Float, albumPeak: Float)
+
     @Query("DELETE FROM tracks WHERE id = :trackId")
     suspend fun deleteTrack(trackId: Long)
 

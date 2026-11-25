@@ -8,12 +8,16 @@ import android.provider.OpenableColumns
 import com.example.data.db.TrackEntity
 import com.example.data.model.AudioFormat
 import com.example.data.network.MetadataAutoCompleteRepository
+import com.example.player.ReplayGainAnalyzer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
-class AudioImporter(private val context: Context) {
+class AudioImporter(
+    private val context: Context,
+    private val replayGainAnalyzer: ReplayGainAnalyzer = ReplayGainAnalyzer(context)
+) {
 
     fun takePersistablePermission(uri: Uri) {
         runCatching {
@@ -134,6 +138,10 @@ class AudioImporter(private val context: Context) {
             }
         }
 
+        val rgTags = runCatching {
+            replayGainAnalyzer.readEmbeddedReplayGainTags(uri.toString())
+        }.getOrNull()
+
         TrackEntity(
             uri = uri.toString(),
             fileName = fileName,
@@ -154,7 +162,13 @@ class AudioImporter(private val context: Context) {
             artworkUri = artworkUri,
             sortOrder = sortOrder,
             folderUri = folderUri,
-            metadataEnriched = false
+            metadataEnriched = false,
+            replayGainTrackDb = rgTags?.trackGainDb,
+            replayGainAlbumDb = rgTags?.albumGainDb,
+            replayGainTrackPeak = rgTags?.trackPeak,
+            replayGainAlbumPeak = rgTags?.albumPeak,
+            integratedLufs = rgTags?.integratedLufs,
+            replayGainSource = rgTags?.source?.code.orEmpty()
         )
     }
 

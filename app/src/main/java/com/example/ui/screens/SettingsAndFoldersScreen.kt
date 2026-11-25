@@ -950,7 +950,57 @@ fun SettingsAndFoldersScreen(
             }
         }
 
-        // 6. Password-Protected Hidden API Vault Card
+        // 5b. Unlocked Web Metadata Lookup API Card
+        item(key = "web_metadata_api_card") {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = photonColors.glassSurface,
+                border = BorderStroke(1.dp, photonColors.photonGlow.copy(alpha = 0.45f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = photonColors.photonGlow,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Web Metadata Lookup API",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Text(
+                                text = "Auto-complete album art, publisher & release date on import and in Metadata Editor",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = settings.autoEnrichMetadata,
+                        onCheckedChange = onSetAutoEnrichMetadata,
+                        modifier = Modifier.testTag("auto_enrich_switch"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                            checkedTrackColor = photonColors.photonGlow
+                        )
+                    )
+                }
+            }
+        }
+
+        // 6. Password-Protected Hidden Release API Vault Card
         item(key = "protected_api_vault_card") {
             Surface(
                 shape = RoundedCornerShape(20.dp),
@@ -984,12 +1034,12 @@ fun SettingsAndFoldersScreen(
                             )
                             Column {
                                 Text(
-                                    text = if (isApiUnlocked) "Protected API Controls (Unlocked)" else "Protected API Access",
+                                    text = if (isApiUnlocked) "Protected Release API Controls (Unlocked)" else "Protected Release API Access",
                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                                 )
                                 Text(
                                     text = if (isApiUnlocked) {
-                                        "External metadata & release APIs unlocked for this session"
+                                        "GitHub Releases API unlocked for this session"
                                     } else {
                                         "Hidden behind password · Installed v${BuildConfig.VERSION_NAME}"
                                     },
@@ -1003,9 +1053,9 @@ fun SettingsAndFoldersScreen(
                     if (!isApiUnlocked) {
                         Text(
                             text = if (settings.hasApiPassword) {
-                                "API endpoints, repository settings, and web lookup controls are hidden. Enter your password to access them."
+                                "GitHub release endpoints and repository settings are hidden. Enter your password to access them."
                             } else {
-                                "API endpoints and external lookup controls are hidden by default. Create a local password to unlock API access."
+                                "GitHub release endpoints and repository settings are hidden by default. Create a local password to unlock them."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1051,48 +1101,6 @@ fun SettingsAndFoldersScreen(
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Change Password")
                             }
-                        }
-
-                        HorizontalDivider(color = photonColors.cardBorder.copy(alpha = 0.5f))
-
-                        // Web Metadata Lookup API Toggle
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    Icons.Rounded.AutoAwesome,
-                                    contentDescription = null,
-                                    tint = photonColors.photonGlow,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Column {
-                                    Text(
-                                        text = "Auto-Complete Web Metadata API",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
-                                    )
-                                    Text(
-                                        text = "Query web metadata APIs for album art, publisher & release date on import",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            Switch(
-                                checked = settings.autoEnrichMetadata,
-                                onCheckedChange = onSetAutoEnrichMetadata,
-                                modifier = Modifier.testTag("auto_enrich_switch"),
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                    checkedTrackColor = photonColors.photonGlow
-                                )
-                            )
                         }
 
                         HorizontalDivider(color = photonColors.cardBorder.copy(alpha = 0.5f))

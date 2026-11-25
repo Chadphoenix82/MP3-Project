@@ -17,11 +17,22 @@ import com.example.data.db.TrackPlayStat
 import com.example.data.db.WatchedFolderDao
 import com.example.data.db.WatchedFolderEntity
 import com.example.data.model.MetadataSuggestion
+import com.example.data.model.ReplayGainCalculator
+import com.example.data.model.ReplayGainScanProgress
 import com.example.data.network.MetadataAutoCompleteRepository
 import com.example.data.prefs.SettingsRepository
+import com.example.player.ReplayGainAnalyzer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlin.math.log10
+import kotlin.math.pow
 
 class LibraryRepository(
     private val trackDao: TrackDao,
@@ -33,7 +44,8 @@ class LibraryRepository(
     private val metadataRepository: MetadataAutoCompleteRepository,
     private val folderMonitorManager: FolderMonitorManager,
     private val wavGenerator: StudioWavGenerator,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val replayGainAnalyzer: ReplayGainAnalyzer
 ) {
     val allTracks: Flow<List<TrackEntity>> = trackDao.observeAllTracks()
     val playlists: Flow<List<PlaylistWithSummary>> = playlistDao.observePlaylistsWithSummary()
@@ -45,6 +57,10 @@ class LibraryRepository(
     val artistPlayStats: Flow<List<ArtistPlayStat>> = listeningHistoryDao.observeArtistPlayStats()
     val totalPlayCount: Flow<Int> = listeningHistoryDao.observeTotalPlayCount()
     val monitorStatus: StateFlow<FolderMonitorStatus> = folderMonitorManager.status
+
+    private val _replayGainScanProgress = MutableStateFlow(ReplayGainScanProgress())
+    val replayGainScanProgress: StateFlow<ReplayGainScanProgress> = _replayGainScanProgress.asStateFlow()
+    private val replayGainScanMutex = Mutex()
 
     fun startFolderMonitoring() {
         folderMonitorManager.startMonitoring()
@@ -217,6 +233,148 @@ class LibraryRepository(
             trackId = trackId,
             customGainDb = customGainDb.coerceIn(-6f, 6f),
             preferredEqPreset = preferredEqPreset?.trim()?.takeIf { it.isNotEmpty() }
+        )
+    }
+
+    // ---- ReplayGain 2.0 & ITU-R BS.1770-4 LUFS Loudness Scanning ----
+
+    suspend fun scanTrackLoudness(
+        track: TrackEntity,
+        forceAudioScan: Boolean = false
+    ): TrackEntity = withContext(Dispatchers.IO) {
+        val result = replayGainAnalyzer.analyzeTrack(
+            uriString = track.uri,
+            forceAudioScan = forceAudioScan
+        )
+        if (!result.hasData) return@withContext track
+
+        trackDao.updateTrackLoudness(
+            trackId = track.id,
+            trackGainDb = result.trackGainDb,
+            albumGainDb = result.albumGainDb,
+            trackPeak = result.trackPeak,
+            albumPeak = result.albumPeak,
+            integratedLufs = result.integratedLufs,
+            source = result.source.code
+        )
+
+        if (track.album.isNotBlank() && !track.album.equals("Unknown Album", ignoreCase = true)) {
+            recomputeAlbumLoudnessFor(track.album)
+        }
+
+        trackDao.getTrackById(track.id) ?: track.copy(
+            replayGainTrackDb = result.trackGainDb,
+            replayGainAlbumDb = result.albumGainDb ?: track.replayGainAlbumDb,
+            replayGainTrackPeak = result.trackPeak,
+            replayGainAlbumPeak = result.albumPeak ?: track.replayGainAlbumPeak,
+            integratedLufs = result.integratedLufs,
+            replayGainSource = result.source.code
+        )
+    }
+
+    suspend fun scanLibraryLoudness(forceRescan: Boolean = false): Int = withContext(Dispatchers.IO) {
+        if (replayGainScanMutex.isLocked) return@withContext 0
+        replayGainScanMutex.withLock {
+            val tracks = trackDao.getAllTracksOnce()
+            val targets = if (forceRescan) {
+                tracks
+            } else {
+                tracks.filter { it.replayGainTrackDb == null && it.integratedLufs == null }
+            }
+            if (targets.isEmpty()) {
+                recomputeAllAlbumLoudness()
+                return@withLock 0
+            }
+
+            _replayGainScanProgress.value = ReplayGainScanProgress(
+                isScanning = true,
+                scannedCount = 0,
+                totalCount = targets.size,
+                currentTrackTitle = targets.first().title
+            )
+
+            var analyzedCount = 0
+            try {
+                targets.forEachIndexed { idx, track ->
+                    _replayGainScanProgress.value = ReplayGainScanProgress(
+                        isScanning = true,
+                        scannedCount = idx,
+                        totalCount = targets.size,
+                        currentTrackTitle = track.title
+                    )
+                    val result = runCatching {
+                        replayGainAnalyzer.analyzeTrack(
+                            uriString = track.uri,
+                            forceAudioScan = forceRescan
+                        )
+                    }.getOrNull()
+
+                    if (result != null && result.hasData) {
+                        trackDao.updateTrackLoudness(
+                            trackId = track.id,
+                            trackGainDb = result.trackGainDb,
+                            albumGainDb = result.albumGainDb,
+                            trackPeak = result.trackPeak,
+                            albumPeak = result.albumPeak,
+                            integratedLufs = result.integratedLufs,
+                            source = result.source.code
+                        )
+                        analyzedCount++
+                    }
+                    _replayGainScanProgress.value = ReplayGainScanProgress(
+                        isScanning = true,
+                        scannedCount = idx + 1,
+                        totalCount = targets.size,
+                        currentTrackTitle = track.title
+                    )
+                }
+                recomputeAllAlbumLoudness()
+            } finally {
+                _replayGainScanProgress.value = ReplayGainScanProgress(
+                    isScanning = false,
+                    scannedCount = analyzedCount,
+                    totalCount = targets.size,
+                    currentTrackTitle = ""
+                )
+            }
+            analyzedCount
+        }
+    }
+
+    private suspend fun recomputeAlbumLoudnessFor(albumName: String) {
+        val albumTracks = trackDao.getAllTracksOnce().filter { it.album == albumName }
+        persistAlbumAggregation(albumName, albumTracks)
+    }
+
+    private suspend fun recomputeAllAlbumLoudness() {
+        val grouped = trackDao.getAllTracksOnce()
+            .filter { it.album.isNotBlank() && !it.album.equals("Unknown Album", ignoreCase = true) }
+            .groupBy { it.album }
+        grouped.forEach { (albumName, albumTracks) ->
+            persistAlbumAggregation(albumName, albumTracks)
+        }
+    }
+
+    private suspend fun persistAlbumAggregation(albumName: String, albumTracks: List<TrackEntity>) {
+        if (albumTracks.isEmpty()) return
+        // Compute energy-averaged album integrated loudness across all analyzed tracks in the album
+        val measuredLufs = albumTracks.mapNotNull { t ->
+            t.integratedLufs ?: t.replayGainTrackDb?.let { ReplayGainCalculator.RG2_REFERENCE_LUFS - it }
+        }
+        if (measuredLufs.isEmpty()) return
+
+        // Convert LUFS to linear acoustic energy, average across tracks, and convert back to LUFS
+        val meanEnergy = measuredLufs.map { lufs -> 10.0.pow(lufs.toDouble() / 10.0) }.average()
+        if (meanEnergy <= 0.0) return
+        val albumLufs = (10.0 * log10(meanEnergy)).toFloat()
+        val albumGainDb = (ReplayGainCalculator.RG2_REFERENCE_LUFS - albumLufs).coerceIn(-18f, 18f)
+        val albumPeak = albumTracks.mapNotNull { it.replayGainTrackPeak ?: it.replayGainAlbumPeak }
+            .maxOrNull() ?: 1.0f
+
+        trackDao.updateAlbumLoudness(
+            albumName = albumName,
+            albumGainDb = albumGainDb,
+            albumPeak = albumPeak
         )
     }
 

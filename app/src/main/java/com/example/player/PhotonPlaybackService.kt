@@ -29,6 +29,7 @@ import com.example.data.model.AudioSignalInfo
 import com.example.data.model.CodecQualityTier
 import com.example.data.model.CrossfadeCurveShape
 import com.example.data.model.PhotonEqPresets
+import com.example.data.model.ReplayGainCalculator
 import com.example.data.model.SleepTimerState
 import com.example.data.model.StudioDspConfig
 import com.example.widget.PhotonWidgetUpdater
@@ -634,8 +635,25 @@ class PhotonPlaybackService : MediaSessionService() {
     }
 
     private fun effectiveStudioDsp(): StudioDspConfig {
-        val currentTrackGain = queue.getOrNull(currentIndex)?.customGainDb ?: 0f
-        return lastStudioDsp.copy(trackGainOffsetDb = currentTrackGain)
+        val currentTrack = queue.getOrNull(currentIndex)
+        val currentTrackGain = currentTrack?.customGainDb ?: 0f
+        val effectiveRg = ReplayGainCalculator.computeEffectiveGain(
+            mode = lastStudioDsp.replayGainMode,
+            targetLufs = lastStudioDsp.replayGainTargetLufs,
+            rgPreAmpDb = lastStudioDsp.replayGainPreAmpDb,
+            fallbackPreAmpDb = lastStudioDsp.replayGainFallbackPreAmpDb,
+            preventClipping = lastStudioDsp.preventClipping,
+            trackGainDb = currentTrack?.replayGainTrackDb,
+            albumGainDb = currentTrack?.replayGainAlbumDb,
+            trackPeak = currentTrack?.replayGainTrackPeak,
+            albumPeak = currentTrack?.replayGainAlbumPeak,
+            integratedLufs = currentTrack?.integratedLufs,
+            sourceCode = currentTrack?.replayGainSource
+        )
+        return lastStudioDsp.copy(
+            trackGainOffsetDb = currentTrackGain,
+            activeReplayGainDb = effectiveRg.appliedGainDb
+        )
     }
 
     private fun syncProcessorsWithEqualizer() {

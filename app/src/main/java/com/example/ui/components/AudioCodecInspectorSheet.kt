@@ -59,6 +59,8 @@ import com.example.data.db.TrackEntity
 import com.example.data.model.AudioSignalInfo
 import com.example.data.model.CodecQualityTier
 import com.example.data.model.OutputTransportType
+import com.example.data.model.ReplayGainCalculator
+import com.example.data.model.ReplayGainMode
 import com.example.data.prefs.AppSettings
 import com.example.ui.theme.LocalPhotonColors
 
@@ -222,6 +224,21 @@ fun AudioCodecInspectorSheet(
             SignalConnectorLine(topColor = decoderColor, bottomColor = photonColors.nebulaAccent)
 
             // STAGE 3: DSP & Equalizer Stage
+            val effectiveRg = remember(track, settings) {
+                ReplayGainCalculator.computeEffectiveGain(
+                    mode = settings.replayGainMode,
+                    targetLufs = settings.replayGainTargetLufs,
+                    rgPreAmpDb = settings.replayGainPreAmpDb,
+                    fallbackPreAmpDb = settings.replayGainFallbackPreAmpDb,
+                    preventClipping = settings.preventClipping,
+                    trackGainDb = track.replayGainTrackDb,
+                    albumGainDb = track.replayGainAlbumDb,
+                    trackPeak = track.replayGainTrackPeak,
+                    albumPeak = track.replayGainAlbumPeak,
+                    integratedLufs = track.integratedLufs,
+                    sourceCode = track.replayGainSource
+                )
+            }
             SignalStageCard(
                 stepNumber = "03",
                 stageTitle = "DSP & Equalizer Stage",
@@ -240,9 +257,25 @@ fun AudioCodecInspectorSheet(
                 ) {
                     MetricChip(
                         label = "Equalizer",
-                        value = if (settings.eqEnabled) "5-Band Active" else "Flat / Off",
+                        value = if (settings.eqEnabled) "10-Band Active" else "Flat / Off",
                         accent = photonColors.nebulaAccent
                     )
+                    MetricChip(
+                        label = "ReplayGain",
+                        value = if (settings.replayGainMode == ReplayGainMode.OFF) {
+                            "Off"
+                        } else {
+                            "${settings.replayGainMode.label} (${String.format("%+.1f dB", effectiveRg.appliedGainDb)})"
+                        },
+                        accent = photonColors.losslessBadge
+                    )
+                    effectiveRg.measuredLufs?.let { lufs ->
+                        MetricChip(
+                            label = "Loudness",
+                            value = String.format("%.1f LUFS", lufs),
+                            accent = photonColors.losslessBadge
+                        )
+                    }
                     MetricChip(
                         label = "Bass Boost",
                         value = if (settings.eqEnabled) "${settings.bassBoostStrength / 10}%" else "Off",
@@ -261,7 +294,7 @@ fun AudioCodecInspectorSheet(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Tap to tune 5-band Equalizer & live FFT response",
+                    text = "Tap to tune 10-band Equalizer, ReplayGain & live FFT response",
                     style = MaterialTheme.typography.labelSmall,
                     color = photonColors.photonGlow
                 )

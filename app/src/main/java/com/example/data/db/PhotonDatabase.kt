@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ListeningHistoryEntity::class,
         ExcludedFolderEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class PhotonDatabase : RoomDatabase() {
@@ -85,6 +85,17 @@ abstract class PhotonDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `replayGainTrackDb` REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `replayGainAlbumDb` REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `replayGainTrackPeak` REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `replayGainAlbumPeak` REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `integratedLufs` REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `replayGainSource` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): PhotonDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -92,7 +103,7 @@ abstract class PhotonDatabase : RoomDatabase() {
                     PhotonDatabase::class.java,
                     "photon_audio.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                     .also { INSTANCE = it }

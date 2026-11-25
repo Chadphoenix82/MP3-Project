@@ -127,7 +127,7 @@ class PhotonSpectrumAudioProcessor(
         if (remaining <= 0) return
 
         val dsp = studioDsp
-        val totalGainDb = (dsp.preAmpDb + dsp.trackGainOffsetDb).coerceIn(-18f, 18f)
+        val totalGainDb = (dsp.preAmpDb + dsp.trackGainOffsetDb + dsp.activeReplayGainDb).coerceIn(-20f, 20f)
         val needsPcmDsp = abs(totalGainDb) > 0.05f ||
             dsp.loudnessNormalizerEnabled ||
             dsp.monoAudioEnabled ||

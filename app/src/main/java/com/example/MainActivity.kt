@@ -211,6 +211,7 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
     val updateCheckStatus by viewModel.updateCheckStatus.collectAsStateWithLifecycle()
     val isApiUnlocked by viewModel.isApiUnlocked.collectAsStateWithLifecycle()
+    val replayGainScanProgress by viewModel.replayGainScanProgress.collectAsStateWithLifecycle()
 
     var currentDestination by remember { mutableStateOf(DrawerDestination.LIBRARY) }
     var libraryActivePage by remember { mutableIntStateOf(0) }
@@ -837,15 +838,6 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                 selectedTrackId = editorSelectedTrackId,
                                 currentlyPlayingTrackId = playbackState.currentTrack?.id,
                                 searchState = editorSearchState,
-                                isApiUnlocked = isApiUnlocked,
-                                hasApiPassword = settings.hasApiPassword,
-                                onRequestUnlockApi = {
-                                    apiPasswordDialogMode = if (settings.hasApiPassword) {
-                                        ApiPasswordDialogMode.UNLOCK
-                                    } else {
-                                        ApiPasswordDialogMode.CREATE
-                                    }
-                                },
                                 pickedCoverOverrideUri = pickedCoverOverrideUri,
                                 onClearPickedCoverOverride = { pickedCoverOverrideUri = null },
                                 onSelectTrack = viewModel::selectTrackForEditor,
@@ -862,6 +854,8 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                 telemetry = playbackState.eqTelemetry,
                                 signalInfo = playbackState.signalInfo,
                                 currentTrack = playbackState.currentTrack,
+                                allTracks = allTracks,
+                                replayGainScanProgress = replayGainScanProgress,
                                 spectrumFlow = viewModel.spectrumState,
                                 onToggleEq = viewModel::setEqEnabled,
                                 onSelectPreset = viewModel::applyEqPreset,
@@ -878,7 +872,13 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                 onSetReverbPreset = viewModel::setReverbPreset,
                                 onSetAutoEqByOutputEnabled = viewModel::setAutoEqByOutputEnabled,
                                 onSetOutputRouteEqPreset = viewModel::setOutputRouteEqPreset,
-                                onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile
+                                onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile,
+                                onSetReplayGainMode = viewModel::setReplayGainMode,
+                                onSetReplayGainTargetLufs = viewModel::setReplayGainTargetLufs,
+                                onSetReplayGainPreAmpDb = viewModel::setReplayGainPreAmpDb,
+                                onSetPreventClipping = viewModel::setPreventClipping,
+                                onScanLibraryLoudness = viewModel::scanLibraryLoudness,
+                                onScanCurrentTrackLoudness = viewModel::scanCurrentTrackLoudness
                             )
 
                             DrawerDestination.SETTINGS -> SettingsAndFoldersScreen(
