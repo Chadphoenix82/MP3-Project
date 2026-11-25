@@ -75,6 +75,76 @@ interface TrackDao {
         replaceArtwork: Boolean = false
     )
 
+    @Query(
+        """
+        UPDATE tracks SET
+            artist = COALESCE(:artist, artist),
+            album = COALESCE(:album, album),
+            genre = COALESCE(:genre, genre),
+            publisher = COALESCE(:publisher, publisher),
+            releaseDate = COALESCE(:releaseDate, releaseDate),
+            releaseYear = CASE WHEN :updateReleaseYear = 1 THEN :releaseYear ELSE releaseYear END,
+            trackNumber = CASE WHEN :updateTrackNumber = 1 THEN :trackNumber ELSE trackNumber END,
+            composer = COALESCE(:composer, composer),
+            notes = COALESCE(:notes, notes),
+            artworkUri = CASE WHEN :updateArtwork = 1 THEN :artworkUri ELSE artworkUri END,
+            metadataEnriched = 1
+        WHERE id = :trackId
+        """
+    )
+    suspend fun updateTrackBatchFields(
+        trackId: Long,
+        artist: String?,
+        album: String?,
+        genre: String?,
+        publisher: String?,
+        releaseDate: String?,
+        updateReleaseYear: Boolean,
+        releaseYear: Int?,
+        updateTrackNumber: Boolean,
+        trackNumber: Int?,
+        composer: String?,
+        notes: String?,
+        updateArtwork: Boolean,
+        artworkUri: String?
+    )
+
+    @Transaction
+    suspend fun updateBatchMetadata(
+        trackIds: List<Long>,
+        artist: String?,
+        album: String?,
+        genre: String?,
+        publisher: String?,
+        releaseDate: String?,
+        updateReleaseYear: Boolean,
+        releaseYear: Int?,
+        autoNumberTracks: Boolean,
+        composer: String?,
+        notes: String?,
+        updateArtwork: Boolean,
+        artworkUri: String?
+    ) {
+        trackIds.forEachIndexed { index, trackId ->
+            updateTrackBatchFields(
+                trackId = trackId,
+                artist = artist,
+                album = album,
+                genre = genre,
+                publisher = publisher,
+                releaseDate = releaseDate,
+                updateReleaseYear = updateReleaseYear,
+                releaseYear = releaseYear,
+                updateTrackNumber = autoNumberTracks,
+                trackNumber = if (autoNumberTracks) index + 1 else null,
+                composer = composer,
+                notes = notes,
+                updateArtwork = updateArtwork,
+                artworkUri = artworkUri
+            )
+        }
+    }
+
     @Query("UPDATE tracks SET isFavorite = :isFavorite WHERE id = :trackId")
     suspend fun setFavorite(trackId: Long, isFavorite: Boolean)
 

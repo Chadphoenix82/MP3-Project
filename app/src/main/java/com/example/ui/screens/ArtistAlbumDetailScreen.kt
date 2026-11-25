@@ -1,0 +1,626 @@
+package com.example.ui.screens
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.QueuePlayNext
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.example.data.db.TrackEntity
+import com.example.ui.components.AudioFormatBadge
+import com.example.ui.components.PhotonAlbumArt
+import com.example.ui.components.PhotonEqualizerBars
+import com.example.ui.components.formatDurationMs
+import com.example.ui.theme.LocalPhotonColors
+
+sealed class CollectionDetailTarget {
+    data class Artist(val artistName: String) : CollectionDetailTarget()
+    data class Album(val albumName: String, val preferredArtist: String? = null) : CollectionDetailTarget()
+}
+
+private data class ArtistAlbumCardModel(
+    val albumName: String,
+    val tracks: List<TrackEntity>,
+    val artworkUri: String?,
+    val releaseYear: Int?
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ArtistAlbumDetailScreen(
+    target: CollectionDetailTarget,
+    allTracks: List<TrackEntity>,
+    currentTrackId: Long?,
+    isPlaying: Boolean,
+    onBack: () -> Unit,
+    onNavigateToArtist: (String) -> Unit,
+    onNavigateToAlbum: (albumName: String, preferredArtist: String?) -> Unit,
+    onPlayTracks: (List<TrackEntity>, Int) -> Unit,
+    onShuffleTracks: (List<TrackEntity>) -> Unit,
+    onPlayNext: (TrackEntity) -> Unit,
+    onToggleFavorite: (TrackEntity) -> Unit,
+    onAddToPlaylist: (TrackEntity) -> Unit,
+    onEditTrackMetadata: (TrackEntity) -> Unit,
+    onEditAlbumMetadata: (albumName: String, anchorTrack: TrackEntity) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BackHandler(onBack = onBack)
+
+    val photonColors = LocalPhotonColors.current
+
+    val matchedTracks = remember(target, allTracks) {
+        when (target) {
+            is CollectionDetailTarget.Artist -> {
+                allTracks
+                    .filter { it.artist.equals(target.artistName, ignoreCase = true) }
+                    .sortedWith(
+                        compareBy<TrackEntity> { it.album.lowercase() }
+                            .thenBy { it.trackNumber ?: Int.MAX_VALUE }
+                            .thenBy { it.title.lowercase() }
+                    )
+            }
+            is CollectionDetailTarget.Album -> {
+                allTracks
+                    .filter { it.album.equals(target.albumName, ignoreCase = true) }
+                    .sortedWith(
+                        compareBy<TrackEntity> { it.trackNumber ?: Int.MAX_VALUE }
+                            .thenBy { it.sortOrder }
+                            .thenBy { it.title.lowercase() }
+                    )
+            }
+        }
+    }
+
+    val artistAlbums = remember(target, matchedTracks) {
+        if (target !is CollectionDetailTarget.Artist) emptyList()
+        else matchedTracks
+            .groupBy { it.album.ifBlank { "Unknown Album" } }
+            .entries
+            .sortedBy { it.key.lowercase() }
+            .map { (albumName, tracksInAlbum) ->
+                ArtistAlbumCardModel(
+                    albumName = albumName,
+                    tracks = tracksInAlbum.sortedBy { it.trackNumber ?: Int.MAX_VALUE },
+                    artworkUri = tracksInAlbum.firstNotNullOfOrNull { it.artworkUri?.takeIf(String::isNotBlank) },
+                    releaseYear = tracksInAlbum.mapNotNull { it.releaseYear }.maxOrNull()
+                )
+            }
+    }
+
+    val heroArtwork = remember(matchedTracks) {
+        matchedTracks.firstNotNullOfOrNull { it.artworkUri?.takeIf(String::isNotBlank) }
+    }
+    val totalDurationMs = remember(matchedTracks) { matchedTracks.sumOf { it.durationMs.coerceAtLeast(0L) } }
+    val distinctGenres = remember(matchedTracks) {
+        matchedTracks.map { it.genre }.filter { it.isNotBlank() }.distinct().take(3)
+    }
+    val albumPrimaryArtist = remember(target, matchedTracks) {
+        if (target !is CollectionDetailTarget.Album) null
+        else {
+            val artists = matchedTracks.map { it.artist }.filter { it.isNotBlank() }.distinct()
+            when {
+                artists.size == 1 -> artists.first()
+                !target.preferredArtist.isNullOrBlank() -> target.preferredArtist
+                artists.isNotEmpty() -> artists.first()
+                else -> "Unknown Artist"
+            }
+        }
+    }
+    val releaseYear = remember(matchedTracks) { matchedTracks.mapNotNull { it.releaseYear }.maxOrNull() }
+    val publisher = remember(matchedTracks) {
+        matchedTracks.map { it.publisher }
+            .firstOrNull { it.isNotBlank() && !it.equals("Independent", ignoreCase = true) }
+    }
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("artist_album_detail_screen"),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 156.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // 1. Hero Header Card
+        item(key = "collection_hero") {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = photonColors.glassSurface,
+                border = BorderStroke(1.1.dp, photonColors.photonGlow.copy(alpha = 0.55f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        PhotonAlbumArt(
+                            artworkUri = heroArtwork,
+                            contentDescription = when (target) {
+                                is CollectionDetailTarget.Artist -> "Artwork for ${target.artistName}"
+                                is CollectionDetailTarget.Album -> "Cover art for ${target.albumName}"
+                            },
+                            size = 108.dp,
+                            cornerRadius = if (target is CollectionDetailTarget.Artist) 54.dp else 20.dp,
+                            showPhotonRing = true
+                        )
+
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (target is CollectionDetailTarget.Artist) Icons.Rounded.Person else Icons.Rounded.Album,
+                                    contentDescription = null,
+                                    tint = photonColors.photonGlow,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = if (target is CollectionDetailTarget.Artist) "ARTIST" else "ALBUM",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = photonColors.photonGlow
+                                )
+                            }
+
+                            Text(
+                                text = when (target) {
+                                    is CollectionDetailTarget.Artist -> target.artistName
+                                    is CollectionDetailTarget.Album -> target.albumName
+                                },
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            if (target is CollectionDetailTarget.Album && !albumPrimaryArtist.isNullOrBlank()) {
+                                Surface(
+                                    onClick = { onNavigateToArtist(albumPrimaryArtist) },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = photonColors.photonGlow.copy(alpha = 0.14f),
+                                    border = BorderStroke(0.75.dp, photonColors.photonGlow.copy(alpha = 0.45f)),
+                                    modifier = Modifier.testTag("album_detail_artist_link")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Person,
+                                            contentDescription = "View artist $albumPrimaryArtist",
+                                            tint = photonColors.photonGlow,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = albumPrimaryArtist,
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                            color = photonColors.photonGlow,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Rounded.ChevronRight,
+                                            contentDescription = null,
+                                            tint = photonColors.photonGlow,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            val statsSummary = buildList {
+                                if (target is CollectionDetailTarget.Artist && artistAlbums.isNotEmpty()) {
+                                    add("${artistAlbums.size} Album${if (artistAlbums.size == 1) "" else "s"}")
+                                }
+                                add("${matchedTracks.size} Track${if (matchedTracks.size == 1) "" else "s"}")
+                                if (totalDurationMs > 0L) add(formatDurationMs(totalDurationMs))
+                                if (releaseYear != null && target is CollectionDetailTarget.Album) add("$releaseYear")
+                            }.joinToString(" · ")
+
+                            Text(
+                                text = statsSummary,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (distinctGenres.isNotEmpty() || publisher != null) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            distinctGenres.forEach { genre ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = photonColors.nebulaAccent.copy(alpha = 0.16f),
+                                    border = BorderStroke(0.7.dp, photonColors.nebulaAccent.copy(alpha = 0.45f))
+                                ) {
+                                    Text(
+                                        text = genre,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = photonColors.nebulaAccent,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                            if (publisher != null) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    border = BorderStroke(0.7.dp, photonColors.cardBorder)
+                                ) {
+                                    Text(
+                                        text = publisher,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Primary Playback Actions + Edit Album shortcut
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = { onPlayTracks(matchedTracks, 0) },
+                            enabled = matchedTracks.isNotEmpty(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = photonColors.photonGlow,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("collection_play_all_btn")
+                        ) {
+                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Play All", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                        }
+
+                        OutlinedButton(
+                            onClick = { onShuffleTracks(matchedTracks) },
+                            enabled = matchedTracks.isNotEmpty(),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("collection_shuffle_btn")
+                        ) {
+                            Icon(Icons.Rounded.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Shuffle", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold))
+                        }
+                    }
+
+                    if (target is CollectionDetailTarget.Album && matchedTracks.isNotEmpty()) {
+                        OutlinedButton(
+                            onClick = { onEditAlbumMetadata(target.albumName, matchedTracks.first()) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .testTag("album_detail_edit_metadata_btn")
+                        ) {
+                            Icon(Icons.Rounded.EditNote, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Edit Album Metadata & Cover", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Artist Mode: Horizontal Albums Carousel
+        if (target is CollectionDetailTarget.Artist && artistAlbums.isNotEmpty()) {
+            item(key = "artist_albums_section") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "ALBUMS (${artistAlbums.size})",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = photonColors.photonGlow,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(horizontal = 2.dp)
+                    ) {
+                        items(artistAlbums, key = { it.albumName }) { albumCard ->
+                            Surface(
+                                onClick = { onNavigateToAlbum(albumCard.albumName, target.artistName) },
+                                shape = RoundedCornerShape(18.dp),
+                                color = photonColors.glassSurface,
+                                border = BorderStroke(0.9.dp, photonColors.cardBorder),
+                                modifier = Modifier
+                                    .width(142.dp)
+                                    .testTag("artist_album_card_${albumCard.albumName}")
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    PhotonAlbumArt(
+                                        artworkUri = albumCard.artworkUri,
+                                        contentDescription = "Open album ${albumCard.albumName}",
+                                        size = 122.dp,
+                                        cornerRadius = 12.dp
+                                    )
+                                    Text(
+                                        text = albumCard.albumName,
+                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = buildString {
+                                            append("${albumCard.tracks.size} track${if (albumCard.tracks.size == 1) "" else "s"}")
+                                            if (albumCard.releaseYear != null) append(" · ${albumCard.releaseYear}")
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Tracklist Header
+        item(key = "collection_tracks_header") {
+            Text(
+                text = if (target is CollectionDetailTarget.Album) "ALBUM TRACKLIST" else "ALL SONGS",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = photonColors.photonGlow,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+        }
+
+        if (matchedTracks.isEmpty()) {
+            item(key = "collection_empty") {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = photonColors.glassSurface,
+                    border = BorderStroke(0.9.dp, photonColors.cardBorder)
+                ) {
+                    Text(
+                        text = "No tracks found in your local library for this selection.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(18.dp)
+                    )
+                }
+            }
+        } else {
+            itemsIndexed(matchedTracks, key = { _, track -> track.id }) { index, track ->
+                val isActive = track.id == currentTrackId
+                var menuExpanded by remember { mutableStateOf(false) }
+
+                Surface(
+                    onClick = { onPlayTracks(matchedTracks, index) },
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isActive) {
+                        photonColors.photonGlow.copy(alpha = 0.14f)
+                    } else {
+                        photonColors.glassSurface
+                    },
+                    border = BorderStroke(
+                        width = if (isActive) 1.2.dp else 0.8.dp,
+                        color = if (isActive) photonColors.photonGlow else photonColors.cardBorder
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("collection_track_item_${track.id}")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (target is CollectionDetailTarget.Album) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isActive) photonColors.photonGlow.copy(alpha = 0.22f)
+                                        else MaterialTheme.colorScheme.surfaceContainerHigh
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isActive && isPlaying) {
+                                    PhotonEqualizerBars(isPlaying = true)
+                                } else {
+                                    Text(
+                                        text = String.format("%02d", track.trackNumber ?: (index + 1)),
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = if (isActive) photonColors.photonGlow else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        } else {
+                            Box(contentAlignment = Alignment.Center) {
+                                PhotonAlbumArt(
+                                    artworkUri = track.artworkUri,
+                                    contentDescription = "Cover for ${track.title}",
+                                    size = 44.dp,
+                                    cornerRadius = 10.dp,
+                                    isPlaying = isActive && isPlaying
+                                )
+                            }
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = track.title,
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = if (isActive) photonColors.photonGlow else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                AudioFormatBadge(format = track.format)
+                            }
+                            Text(
+                                text = buildString {
+                                    if (target is CollectionDetailTarget.Artist) {
+                                        append(track.album)
+                                    } else {
+                                        append(track.artist)
+                                    }
+                                    if (track.durationMs > 0L) {
+                                        append(" · ")
+                                        append(formatDurationMs(track.durationMs))
+                                    }
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { onToggleFavorite(track) },
+                            modifier = Modifier.size(44.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (track.isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                contentDescription = if (track.isFavorite) "Remove from favorites" else "Add to favorites",
+                                tint = if (track.isFavorite) Color(0xFFFF5C8A) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Box {
+                            IconButton(
+                                onClick = { menuExpanded = true },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MoreVert,
+                                    contentDescription = "Track options",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = menuExpanded,
+                                onDismissRequest = { menuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Play Next") },
+                                    leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, contentDescription = null) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onPlayNext(track)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add to Playlist") },
+                                    leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, contentDescription = null) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onAddToPlaylist(track)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Edit Metadata") },
+                                    leadingIcon = { Icon(Icons.Rounded.EditNote, contentDescription = null) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onEditTrackMetadata(track)
+                                    }
+                                )
+                                if (target is CollectionDetailTarget.Artist && track.album.isNotBlank()) {
+                                    DropdownMenuItem(
+                                        text = { Text("Go to Album") },
+                                        leadingIcon = { Icon(Icons.Rounded.Album, contentDescription = null) },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onNavigateToAlbum(track.album, track.artist)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

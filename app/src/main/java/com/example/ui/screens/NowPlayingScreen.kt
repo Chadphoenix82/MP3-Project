@@ -26,6 +26,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -47,6 +49,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BluetoothAudio
@@ -60,6 +63,7 @@ import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Loop
 import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Repeat
@@ -144,6 +148,7 @@ fun PhotonMiniPlayerBar(
     onTogglePlayPause: () -> Unit,
     onSkipNext: () -> Unit,
     onSkipPrevious: () -> Unit,
+    onNavigateToArtist: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val track = playbackState.currentTrack ?: return
@@ -231,7 +236,16 @@ fun PhotonMiniPlayerBar(
                         style = MaterialTheme.typography.bodySmall,
                         color = if (playbackState.isCrossfading) photonColors.photonGlow else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = if (!playbackState.isCrossfading && onNavigateToArtist != null && track.artist.isNotBlank()) {
+                            Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { onNavigateToArtist(track.artist) }
+                                .padding(vertical = 2.dp)
+                                .testTag("mini_player_artist_link")
+                        } else {
+                            Modifier
+                        }
                     )
                 }
 
@@ -284,6 +298,7 @@ fun PhotonMiniPlayerBar(
  * - Swipe Left / Right on the artwork deck to skip Next / Previous tracks.
  * - Swipe Up / Down on the artwork deck to smoothly adjust media volume with live HUD feedback.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun NowPlayingScreen(
     playbackState: PlaybackUiState,
@@ -315,7 +330,9 @@ fun NowPlayingScreen(
     onSetAbLoopStart: () -> Unit,
     onSetAbLoopEnd: () -> Unit,
     onClearAbLoop: () -> Unit,
-    onUpdateTrackSoundProfile: (TrackEntity, Float, String?) -> Unit = { _, _, _ -> }
+    onUpdateTrackSoundProfile: (TrackEntity, Float, String?) -> Unit = { _, _, _ -> },
+    onNavigateToArtist: (String) -> Unit = {},
+    onNavigateToAlbum: (albumName: String, preferredArtist: String?) -> Unit = { _, _ -> }
 ) {
     BackHandler(onBack = onCollapse)
 
@@ -766,14 +783,88 @@ fun NowPlayingScreen(
                         )
                     }
                 }
-                Text(
-                    text = "${track.artist} • ${track.album}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = photonColors.photonGlow,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                // Interactive Artist & Album Navigation Links
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Surface(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onNavigateToArtist(track.artist)
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = photonColors.photonGlow.copy(alpha = 0.14f),
+                        border = BorderStroke(0.85.dp, photonColors.photonGlow.copy(alpha = 0.48f)),
+                        modifier = Modifier.testTag("now_playing_artist_link")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Person,
+                                contentDescription = "View artist ${track.artist}",
+                                tint = photonColors.photonGlow,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = track.artist,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = photonColors.photonGlow,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 200.dp)
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = photonColors.photonGlow.copy(alpha = 0.8f),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onNavigateToAlbum(track.album, track.artist)
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = photonColors.nebulaAccent.copy(alpha = 0.14f),
+                        border = BorderStroke(0.85.dp, photonColors.nebulaAccent.copy(alpha = 0.48f)),
+                        modifier = Modifier.testTag("now_playing_album_link")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Album,
+                                contentDescription = "View album ${track.album}",
+                                tint = photonColors.nebulaAccent,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = track.album,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = photonColors.nebulaAccent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 200.dp)
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = photonColors.nebulaAccent.copy(alpha = 0.8f),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                }
 
                 val signalInfo = playbackState.signalInfo
                 val displayRateHz = signalInfo.sourceSampleRateHz.takeIf { it > 0 } ?: track.sampleRateHz

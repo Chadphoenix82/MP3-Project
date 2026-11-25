@@ -41,6 +41,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Bedtime
@@ -112,9 +113,12 @@ import coil.request.ImageRequest
 import com.example.data.db.TrackEntity
 import com.example.ui.PhotonViewModel
 import com.example.ui.components.GalaxyBackdrop
+import com.example.ui.screens.ArtistAlbumDetailScreen
+import com.example.ui.screens.CollectionDetailTarget
 import com.example.ui.screens.EqualizerScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.ListeningStatsScreen
+import com.example.ui.screens.MetadataEditorMode
 import com.example.ui.screens.MetadataEditorScreen
 import com.example.ui.screens.NowPlayingScreen
 import com.example.ui.screens.PhotonMiniPlayerBar
@@ -218,21 +222,69 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     var nowPlayingExpanded by remember { mutableStateOf(false) }
+    var collectionBackStack by remember { mutableStateOf<List<CollectionDetailTarget>>(emptyList()) }
+    var editorInitialMode by remember { mutableStateOf(MetadataEditorMode.SINGLE) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var trackForPlaylistPicker by remember { mutableStateOf<TrackEntity?>(null) }
     var apiPasswordDialogMode by remember { mutableStateOf<ApiPasswordDialogMode?>(null) }
+
+    val activeCollectionDetail = collectionBackStack.lastOrNull()
 
     // Cover Art Photo Picker tracking
     var pendingCoverTrackId by remember { mutableStateOf<Long?>(null) }
     var pickedCoverOverrideUri by remember { mutableStateOf<String?>(null) }
 
     val navigateTo: (DrawerDestination) -> Unit = { target ->
+        collectionBackStack = emptyList()
+        if (target == DrawerDestination.METADATA_EDITOR) {
+            editorInitialMode = MetadataEditorMode.SINGLE
+        }
         currentDestination = target
         scope.launch { drawerState.close() }
     }
 
+    val openArtistDetail: (String) -> Unit = { artistName ->
+        if (artistName.isNotBlank()) {
+            nowPlayingExpanded = false
+            val target = CollectionDetailTarget.Artist(artistName)
+            collectionBackStack = if (collectionBackStack.lastOrNull() == target) {
+                collectionBackStack
+            } else {
+                collectionBackStack + target
+            }
+        }
+    }
+
+    val openAlbumDetail: (String, String?) -> Unit = { albumName, preferredArtist ->
+        if (albumName.isNotBlank()) {
+            nowPlayingExpanded = false
+            val target = CollectionDetailTarget.Album(albumName, preferredArtist)
+            collectionBackStack = if (collectionBackStack.lastOrNull() == target) {
+                collectionBackStack
+            } else {
+                collectionBackStack + target
+            }
+        }
+    }
+
+    val popCollectionDetail: () -> Unit = {
+        if (collectionBackStack.isNotEmpty()) {
+            collectionBackStack = collectionBackStack.dropLast(1)
+        }
+    }
+
     val openTrackInMetadataEditor: (TrackEntity) -> Unit = { track ->
         viewModel.selectTrackForEditor(track)
+        editorInitialMode = MetadataEditorMode.SINGLE
+        collectionBackStack = emptyList()
+        nowPlayingExpanded = false
+        currentDestination = DrawerDestination.METADATA_EDITOR
+    }
+
+    val openAlbumInMetadataEditor: (String, TrackEntity) -> Unit = { _, anchorTrack ->
+        viewModel.selectTrackForEditor(anchorTrack)
+        editorInitialMode = MetadataEditorMode.ALBUM
+        collectionBackStack = emptyList()
         nowPlayingExpanded = false
         currentDestination = DrawerDestination.METADATA_EDITOR
     }
@@ -259,6 +311,7 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     BackHandler(
         enabled = !drawerState.isOpen &&
             !nowPlayingExpanded &&
+            activeCollectionDetail == null &&
             currentDestination != DrawerDestination.LIBRARY &&
             selectedPlaylistId == null
     ) {
@@ -663,21 +716,39 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                     topBar = {
                         TopAppBar(
                             navigationIcon = {
-                                IconButton(
-                                    onClick = { scope.launch { drawerState.open() } },
-                                    modifier = Modifier.testTag("sidebar_menu_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Menu,
-                                        contentDescription = "Open navigation sidebar",
-                                        tint = photonColors.photonGlow,
-                                        modifier = Modifier.size(26.dp)
-                                    )
+                                if (activeCollectionDetail != null) {
+                                    IconButton(
+                                        onClick = popCollectionDetail,
+                                        modifier = Modifier.testTag("collection_detail_back_btn")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                            contentDescription = "Navigate back",
+                                            tint = photonColors.photonGlow,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = { scope.launch { drawerState.open() } },
+                                        modifier = Modifier.testTag("sidebar_menu_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Menu,
+                                            contentDescription = "Open navigation sidebar",
+                                            tint = photonColors.photonGlow,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
                                 }
                             },
                             title = {
                                 Text(
-                                    text = currentDestination.label,
+                                    text = when (activeCollectionDetail) {
+                                        is CollectionDetailTarget.Artist -> "Artist"
+                                        is CollectionDetailTarget.Album -> "Album"
+                                        null -> currentDestination.label
+                                    },
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
@@ -726,13 +797,34 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                     onExpandClick = { nowPlayingExpanded = true },
                                     onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
                                     onSkipNext = { viewModel.playerController.skipNext() },
-                                    onSkipPrevious = { viewModel.playerController.skipPrevious() }
+                                    onSkipPrevious = { viewModel.playerController.skipPrevious() },
+                                    onNavigateToArtist = openArtistDetail
                                 )
                             }
                         }
                     }
                 ) { innerPadding ->
-                    Crossfade(
+                    if (activeCollectionDetail != null) {
+                        ArtistAlbumDetailScreen(
+                            target = activeCollectionDetail,
+                            allTracks = allTracks,
+                            currentTrackId = playbackState.currentTrack?.id,
+                            isPlaying = playbackState.isPlaying,
+                            onBack = popCollectionDetail,
+                            onNavigateToArtist = openArtistDetail,
+                            onNavigateToAlbum = openAlbumDetail,
+                            onPlayTracks = viewModel::playTracks,
+                            onShuffleTracks = viewModel::playShuffled,
+                            onPlayNext = viewModel::playNextFromSmartQueue,
+                            onToggleFavorite = viewModel::toggleFavorite,
+                            onAddToPlaylist = { trackForPlaylistPicker = it },
+                            onEditTrackMetadata = openTrackInMetadataEditor,
+                            onEditAlbumMetadata = openAlbumInMetadataEditor,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                        )
+                    } else Crossfade(
                         targetState = currentDestination,
                         animationSpec = tween(durationMillis = 220),
                         label = "drawer_destination_crossfade",
@@ -846,7 +938,9 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                     viewModel.searchMetadataForEditor(query = query, targetTrack = track)
                                 },
                                 onLaunchPhotoPickerForCover = launchPickCoverPhoto,
-                                onSaveMetadata = viewModel::saveFullTrackMetadata
+                                onSaveMetadata = viewModel::saveFullTrackMetadata,
+                                onSaveBatchMetadata = viewModel::saveBatchTrackMetadata,
+                                initialEditorMode = editorInitialMode
                             )
 
                             DrawerDestination.EQUALIZER -> EqualizerScreen(
@@ -991,7 +1085,9 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                         onSetAbLoopStart = viewModel::setAbLoopStart,
                         onSetAbLoopEnd = viewModel::setAbLoopEnd,
                         onClearAbLoop = viewModel::clearAbLoop,
-                        onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile
+                        onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile,
+                        onNavigateToArtist = openArtistDetail,
+                        onNavigateToAlbum = openAlbumDetail
                     )
                 }
             }

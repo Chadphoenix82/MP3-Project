@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.data.db.TrackEntity
+import com.example.data.model.BatchMetadataPatch
 import com.example.data.model.MetadataSuggestion
 import com.example.ui.MetadataSearchUiState
 import com.example.ui.components.AudioFormatBadge
@@ -102,6 +103,12 @@ fun MetadataEditorScreen(
         artworkUri: String?,
         replaceArtwork: Boolean
     ) -> Unit,
+    onSaveBatchMetadata: (
+        trackIds: List<Long>,
+        patch: BatchMetadataPatch,
+        contextLabel: String
+    ) -> Unit,
+    initialEditorMode: MetadataEditorMode = MetadataEditorMode.SINGLE,
     modifier: Modifier = Modifier
 ) {
     val photonColors = LocalPhotonColors.current
@@ -154,6 +161,26 @@ fun MetadataEditorScreen(
                 }
             }
         }
+        return
+    }
+
+    var editorMode by remember(initialEditorMode) { mutableStateOf(initialEditorMode) }
+
+    if (editorMode != MetadataEditorMode.SINGLE) {
+        AlbumAndBatchMetadataContent(
+            mode = editorMode,
+            onModeChange = { editorMode = it },
+            allTracks = allTracks,
+            activeTrack = activeTrack,
+            searchState = searchState,
+            pickedCoverOverrideUri = pickedCoverOverrideUri,
+            onClearPickedCoverOverride = onClearPickedCoverOverride,
+            onSearchQueryChange = onSearchQueryChange,
+            onSearchWeb = onSearchWeb,
+            onLaunchPhotoPickerForCover = onLaunchPhotoPickerForCover,
+            onSaveBatchMetadata = onSaveBatchMetadata,
+            modifier = modifier
+        )
         return
     }
 
@@ -210,6 +237,14 @@ fun MetadataEditorScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 160.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 0. Mode Switcher (Single Track / Whole Album / Batch Select)
+        item(key = "editor_mode_selector") {
+            MetadataEditorModeSelector(
+                mode = editorMode,
+                onModeChange = { editorMode = it }
+            )
+        }
+
         // 1. Track Selector Card
         item(key = "editor_track_selector") {
             Surface(

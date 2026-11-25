@@ -14,6 +14,7 @@ import com.example.data.library.FolderMonitorStatus
 import com.example.data.library.LibraryRepository
 import com.example.data.library.SmartQueueEngine
 import com.example.data.library.SmartQueueSuggestion
+import com.example.data.model.BatchMetadataPatch
 import com.example.data.model.CrossfadeCurveShape
 import com.example.data.model.EqualizerPreset
 import com.example.data.model.MetadataSuggestion
@@ -839,6 +840,24 @@ class PhotonViewModel(
                 replaceArtwork = replaceArtwork
             )
             _snackbarMessages.tryEmit("Saved metadata & album cover locally for \"${title.trim().ifBlank { "Track" }}\"")
+        }
+    }
+
+    fun saveBatchTrackMetadata(
+        trackIds: List<Long>,
+        patch: BatchMetadataPatch,
+        contextLabel: String
+    ) {
+        if (trackIds.isEmpty() || !patch.hasAnyChanges) return
+        viewModelScope.launch {
+            val updatedCount = libraryRepository.updateBatchTrackMetadata(trackIds, patch)
+            if (updatedCount > 0) {
+                val activeId = playbackState.value.currentTrack?.id
+                if (activeId != null && activeId in trackIds) {
+                    playerController.refreshWidgets()
+                }
+                _snackbarMessages.tryEmit("Updated metadata for $updatedCount track(s) · $contextLabel")
+            }
         }
     }
 

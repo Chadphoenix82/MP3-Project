@@ -16,6 +16,7 @@ import com.example.data.db.TrackEntity
 import com.example.data.db.TrackPlayStat
 import com.example.data.db.WatchedFolderDao
 import com.example.data.db.WatchedFolderEntity
+import com.example.data.model.BatchMetadataPatch
 import com.example.data.model.MetadataSuggestion
 import com.example.data.model.ReplayGainCalculator
 import com.example.data.model.ReplayGainScanProgress
@@ -218,6 +219,48 @@ class LibraryRepository(
             artworkUri = artworkUri?.trim()?.takeIf { it.isNotBlank() },
             replaceArtwork = replaceArtwork
         )
+    }
+
+    suspend fun updateBatchTrackMetadata(
+        trackIds: List<Long>,
+        patch: BatchMetadataPatch
+    ): Int {
+        val distinctIds = trackIds.distinct()
+        if (distinctIds.isEmpty() || !patch.hasAnyChanges) return 0
+
+        val cleanedArtist = patch.artist?.trim()?.ifBlank { "Unknown Artist" }
+        val cleanedAlbum = patch.album?.trim()?.ifBlank { "Unknown Album" }
+        val cleanedGenre = patch.genre?.trim()?.ifBlank { "Music" }
+        val cleanedPublisher = patch.publisher?.trim()?.ifBlank { "Independent" }
+        val cleanedReleaseDate = patch.releaseDate?.trim()
+        val updateReleaseYear = cleanedReleaseDate != null
+        val extractedYear = cleanedReleaseDate?.let { MetadataAutoCompleteRepository.extractYear(it) }
+        val cleanedComposer = patch.composer?.trim()
+        val cleanedNotes = patch.notes?.trim()
+        val cleanedArtwork = if (patch.updateArtwork) {
+            patch.artworkUri?.trim()?.takeIf { it.isNotBlank() }
+        } else null
+
+        trackDao.updateBatchMetadata(
+            trackIds = distinctIds,
+            artist = cleanedArtist,
+            album = cleanedAlbum,
+            genre = cleanedGenre,
+            publisher = cleanedPublisher,
+            releaseDate = cleanedReleaseDate,
+            updateReleaseYear = updateReleaseYear,
+            releaseYear = extractedYear,
+            autoNumberTracks = patch.autoNumberTracks,
+            composer = cleanedComposer,
+            notes = cleanedNotes,
+            updateArtwork = patch.updateArtwork,
+            artworkUri = cleanedArtwork
+        )
+
+        if (!cleanedAlbum.isNullOrBlank() && !cleanedAlbum.equals("Unknown Album", ignoreCase = true)) {
+            recomputeAlbumLoudnessFor(cleanedAlbum)
+        }
+        return distinctIds.size
     }
 
     suspend fun reorderLibraryTracks(orderedTrackIds: List<Long>) {

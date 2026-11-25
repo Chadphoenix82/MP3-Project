@@ -402,3 +402,31 @@ data class SleepTimerState(
     val endOfTrack: Boolean = false,
     val label: String = "Off"
 )
+
+/**
+ * Partial metadata update applied across an entire album or a multi-selected batch of tracks.
+ * Any null text field is left untouched on each target track.
+ */
+data class BatchMetadataPatch(
+    val artist: String? = null,
+    val album: String? = null,
+    val genre: String? = null,
+    val publisher: String? = null,
+    val releaseDate: String? = null,
+    val composer: String? = null,
+    val notes: String? = null,
+    val artworkUri: String? = null,
+    val updateArtwork: Boolean = false,
+    val autoNumberTracks: Boolean = false
+) {
+    val hasAnyChanges: Boolean
+        get() = artist != null ||
+            album != null ||
+            genre != null ||
+            publisher != null ||
+            releaseDate != null ||
+            composer != null ||
+            notes != null ||
+            updateArtwork ||
+            autoNumberTracks
+}
