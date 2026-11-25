@@ -1,6 +1,7 @@
 package com.example.data.library
 
 import android.net.Uri
+import com.example.data.db.ArtistPlayStat
 import com.example.data.db.ExcludedFolderDao
 import com.example.data.db.ExcludedFolderEntity
 import com.example.data.db.GenrePlayStat
@@ -41,6 +42,7 @@ class LibraryRepository(
     val recentHistory: Flow<List<ListeningHistoryEntity>> = listeningHistoryDao.observeRecentHistory(150)
     val trackPlayStats: Flow<List<TrackPlayStat>> = listeningHistoryDao.observeTrackPlayStats()
     val genrePlayStats: Flow<List<GenrePlayStat>> = listeningHistoryDao.observeGenrePlayStats()
+    val artistPlayStats: Flow<List<ArtistPlayStat>> = listeningHistoryDao.observeArtistPlayStats()
     val totalPlayCount: Flow<Int> = listeningHistoryDao.observeTotalPlayCount()
     val monitorStatus: StateFlow<FolderMonitorStatus> = folderMonitorManager.status
 
@@ -206,6 +208,18 @@ class LibraryRepository(
         trackDao.updateSortOrders(orderedTrackIds)
     }
 
+    suspend fun setTrackFavorite(trackId: Long, isFavorite: Boolean) {
+        trackDao.setFavorite(trackId, isFavorite)
+    }
+
+    suspend fun updateTrackSoundProfile(trackId: Long, customGainDb: Float, preferredEqPreset: String?) {
+        trackDao.updateTrackSoundProfile(
+            trackId = trackId,
+            customGainDb = customGainDb.coerceIn(-6f, 6f),
+            preferredEqPreset = preferredEqPreset?.trim()?.takeIf { it.isNotEmpty() }
+        )
+    }
+
     suspend fun deleteTrack(trackId: Long) {
         trackDao.deleteTrack(trackId)
     }
@@ -216,6 +230,16 @@ class LibraryRepository(
         return playlistDao.insertPlaylist(
             PlaylistEntity(name = name.trim(), description = description.trim())
         )
+    }
+
+    suspend fun createPlaylistFromTracks(name: String, description: String, trackIds: List<Long>): Long {
+        val playlistId = createPlaylist(name, description)
+        trackIds.distinct().forEachIndexed { idx, trackId ->
+            playlistDao.insertPlaylistTrack(
+                PlaylistTrackCrossRef(playlistId = playlistId, trackId = trackId, position = idx)
+            )
+        }
+        return playlistId
     }
 
     suspend fun renamePlaylist(playlistId: Long, name: String, description: String) {

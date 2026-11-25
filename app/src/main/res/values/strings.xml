@@ -14,4 +14,21 @@
     <string name="metadata_autocomplete">Web Metadata Auto-Complete</string>
     <string name="gesture_hint">Swipe ←/→ Skip Track  •  Swipe ↑/↓ Volume</string>
     <string name="drag_hint">Long-press any track or drag handle to reorder</string>
+    <string name="search_library_placeholder">Search songs, genres, playlists, artist, album…</string>
+    <string name="search_recent_header">RECENT SEARCHES</string>
+    <string name="search_suggestions_header">RECENT MATCHES</string>
+    <string name="search_clear_history">Clear all</string>
+    <string name="search_clear_query_cd">Clear search</string>
+    <string name="search_remove_history_cd">Remove from search history</string>
+    <string name="search_fill_query_cd">Insert into search bar</string>
+    <string name="widget_label">Photon Audio Deck</string>
+    <string name="widget_description">Adaptive home screen player with Compact 2×1, Standard 4×2, and Studio 4×3+ layouts.</string>
+    <string name="widget_empty_title">Photon Audio</string>
+    <string name="widget_empty_subtitle">Tap to open your music library</string>
+    <string name="widget_artwork_cd">Album artwork</string>
+    <string name="widget_play_pause_cd">Play or pause</string>
+    <string name="widget_next_cd">Next track</string>
+    <string name="widget_prev_cd">Previous track</string>
+    <string name="widget_favorite_cd">Toggle favorite</string>
+    <string name="widget_shuffle_cd">Toggle shuffle</string>
 </resources>

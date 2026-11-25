@@ -466,10 +466,11 @@ fun PickPlaylistForTrackDialog(
     track: TrackEntity,
     playlists: List<PlaylistWithSummary>,
     onSelectPlaylist: (Long) -> Unit,
-    onCreateAndAdd: (String) -> Unit,
+    onCreateAndAdd: (String, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var newName by remember { mutableStateOf("") }
+    var newDescription by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -488,7 +489,7 @@ fun PickPlaylistForTrackDialog(
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp),
+                            .height(160.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         items(playlists, key = { it.id }) { pl ->
@@ -507,7 +508,18 @@ fun PickPlaylistForTrackDialog(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(pl.name, style = MaterialTheme.typography.titleSmall)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(pl.name, style = MaterialTheme.typography.titleSmall)
+                                        if (pl.description.isNotBlank()) {
+                                            Text(
+                                                pl.description,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
                                     Text(
                                         "${pl.trackCount} tracks",
                                         style = MaterialTheme.typography.labelSmall,
@@ -521,8 +533,17 @@ fun PickPlaylistForTrackDialog(
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
-                    label = { Text("Or create new playlist") },
+                    label = { Text("New Playlist Name") },
                     singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = newDescription,
+                    onValueChange = { newDescription = it },
+                    label = { Text("Playlist Description") },
+                    placeholder = { Text("Optional description...") },
+                    minLines = 2,
+                    maxLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -530,7 +551,7 @@ fun PickPlaylistForTrackDialog(
         confirmButton = {
             if (newName.isNotBlank()) {
                 Button(onClick = {
-                    onCreateAndAdd(newName)
+                    onCreateAndAdd(newName, newDescription)
                     onDismiss()
                 }) {
                     Text("Create & Add")

@@ -42,18 +42,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
@@ -89,21 +93,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.data.db.TrackEntity
 import com.example.ui.PhotonViewModel
 import com.example.ui.components.GalaxyBackdrop
 import com.example.ui.screens.EqualizerScreen
 import com.example.ui.screens.LibraryScreen
+import com.example.ui.screens.ListeningStatsScreen
 import com.example.ui.screens.MetadataEditorScreen
 import com.example.ui.screens.NowPlayingScreen
 import com.example.ui.screens.PhotonMiniPlayerBar
@@ -112,8 +123,11 @@ import com.example.ui.screens.PlaylistsScreen
 import com.example.ui.screens.SettingsAndFoldersScreen
 import com.example.ui.screens.SleepTimerModalDialog
 import com.example.ui.screens.SmartQueueScreen
+import com.example.ui.theme.AppWallpaperPreset
 import com.example.ui.theme.LocalPhotonColors
 import com.example.ui.theme.PhotonAudioTheme
+import com.example.ui.theme.PhotonWallpaperConfig
+import java.io.File
 import kotlinx.coroutines.launch
 
 enum class DrawerDestination(
@@ -121,12 +135,13 @@ enum class DrawerDestination(
     val description: String,
     val icon: ImageVector
 ) {
-    LIBRARY("Library", "Swipeable All, MP3, FLAC, WAV, Opus, AAC & Ogg pages", Icons.Rounded.LibraryMusic),
+    LIBRARY("Library", "Music Library, Genre Folders & Playlists", Icons.Rounded.LibraryMusic),
     PLAYLISTS("Playlists", "Custom playlists & drag-and-drop sorting", Icons.Rounded.QueueMusic),
+    STATS("Listening Stats", "Most played tracks, top genres & favorites", Icons.Rounded.BarChart),
     SMART_QUEUE("Smart Queue", "Listening history & genre recommendations", Icons.Rounded.AutoAwesome),
     METADATA_EDITOR("Metadata Editor", "Edit tags, album covers & exact web lookup", Icons.Rounded.EditNote),
-    EQUALIZER("Equalizer", "5-band graphic EQ, bass & 3D virtualizer", Icons.Rounded.Equalizer),
-    SETTINGS("Settings", "Playback, scanner, exclusions, privacy & updates", Icons.Rounded.Tune)
+    EQUALIZER("Equalizer", "10-band studio EQ, mastering DSP & reverb", Icons.Rounded.Equalizer),
+    SETTINGS("Settings", "Theme, widgets, font, wallpaper & scanner", Icons.Rounded.Tune)
 }
 
 class MainActivity : ComponentActivity() {
@@ -146,7 +161,19 @@ class MainActivity : ComponentActivity() {
             val viewModel: PhotonViewModel = viewModel(factory = factory)
             val settings by viewModel.settings.collectAsStateWithLifecycle()
 
-            PhotonAudioTheme(darkTheme = settings.darkMode) {
+            PhotonAudioTheme(
+                darkTheme = settings.darkMode,
+                cosmicSkin = settings.cosmicThemeSkin,
+                customPrimaryArgb = settings.customAccentPrimaryArgb,
+                customSecondaryArgb = settings.customAccentSecondaryArgb,
+                customOledBlack = settings.customOledBlackBg,
+                fontChoice = settings.appFont,
+                wallpaperConfig = PhotonWallpaperConfig(
+                    preset = settings.wallpaperPreset,
+                    customPhotoPath = settings.customWallpaperPath,
+                    dimAlpha = settings.wallpaperDimAlpha
+                )
+            ) {
                 PhotonAudioRoot(viewModel = viewModel)
             }
         }
@@ -165,6 +192,11 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     val monitorStatus by viewModel.monitorStatus.collectAsStateWithLifecycle()
     val tracks by viewModel.filteredSortedTracks.collectAsStateWithLifecycle()
     val allTracks by viewModel.allTracks.collectAsStateWithLifecycle()
+    val favoriteTracks by viewModel.favoriteTracks.collectAsStateWithLifecycle()
+    val recentlyPlayedTracks by viewModel.recentlyPlayedTracks.collectAsStateWithLifecycle()
+    val mostPlayedTracks by viewModel.mostPlayedTracks.collectAsStateWithLifecycle()
+    val genrePlayStats by viewModel.genrePlayStats.collectAsStateWithLifecycle()
+    val artistPlayStats by viewModel.artistPlayStats.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val watchedFolders by viewModel.watchedFolders.collectAsStateWithLifecycle()
     val excludedFolders by viewModel.excludedFolders.collectAsStateWithLifecycle()
@@ -178,6 +210,7 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
     val updateCheckStatus by viewModel.updateCheckStatus.collectAsStateWithLifecycle()
+    val isApiUnlocked by viewModel.isApiUnlocked.collectAsStateWithLifecycle()
 
     var currentDestination by remember { mutableStateOf(DrawerDestination.LIBRARY) }
     var libraryActivePage by remember { mutableIntStateOf(0) }
@@ -186,6 +219,7 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     var nowPlayingExpanded by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var trackForPlaylistPicker by remember { mutableStateOf<TrackEntity?>(null) }
+    var apiPasswordDialogMode by remember { mutableStateOf<ApiPasswordDialogMode?>(null) }
 
     // Cover Art Photo Picker tracking
     var pendingCoverTrackId by remember { mutableStateOf<Long?>(null) }
@@ -308,9 +342,23 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     }
     val launchWatchFolder = { watchFolderLauncher.launch(null) }
     val launchExcludeFolder = { excludeFolderLauncher.launch(null) }
+    // Zero-permission Android Photo Picker for selecting custom app wallpaper
+    val customWallpaperPhotoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.saveCustomWallpaperPhoto(uri)
+        }
+    }
+
     val launchPickCoverPhoto: (Long) -> Unit = { trackId ->
         pendingCoverTrackId = trackId
         albumCoverPhotoPicker.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
+    val launchPickCustomWallpaper = {
+        customWallpaperPhotoPicker.launch(
             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
         )
     }
@@ -323,197 +371,284 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
         drawerState = drawerState,
         gesturesEnabled = !nowPlayingExpanded && (currentDestination != DrawerDestination.LIBRARY || libraryActivePage == 0),
         drawerContent = {
+            val drawerSelectedBg = lerp(photonColors.backdropMid, photonColors.photonGlow, 0.24f).copy(alpha = 0.92f)
+            val drawerItemBg = photonColors.glassSurface.copy(alpha = 0.88f)
+            val drawerHighlightText = lerp(photonColors.photonGlow, Color.White, 0.22f)
             ModalDrawerSheet(
-                drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                drawerContainerColor = photonColors.backdropTop,
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 modifier = Modifier
                     .width(308.dp)
                     .testTag("navigation_sidebar_drawer")
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .windowInsetsPadding(WindowInsets.statusBars)
-                        .windowInsetsPadding(WindowInsets.navigationBars)
-                ) {
-                    // Galaxy Photon Sidebar Header
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp)
-                            .height(142.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.img_galaxy_hero),
-                            contentDescription = "Photon Audio galaxy sidebar header",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(
-                                        colors = listOf(
-                                            Color(0x66040818),
-                                            Color(0xE8040818)
-                                        )
-                                    )
-                                )
-                        )
-                        Column(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Text(
-                                text = "Photon Audio",
-                                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                                color = Color(0xFFECF4FF)
+                // Full-bleed Wallpaper overlaying underneath all sidebar navigation buttons
+                Box(modifier = Modifier.fillMaxSize()) {
+                    val customWallpaperFile = settings.customWallpaperPath?.let { File(it) }?.takeIf { it.exists() }
+                    when {
+                        settings.wallpaperPreset == AppWallpaperPreset.CUSTOM_PHOTO && customWallpaperFile != null -> {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(customWallpaperFile)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = "Custom drawer wallpaper",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
                             )
-                            Text(
-                                text = "${allTracks.size} Tracks · ${playlists.size} Playlists · Local Only",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF38E4FF)
+                        }
+                        settings.wallpaperPreset == AppWallpaperPreset.PHOTON_PRISM -> {
+                            Image(
+                                painter = painterResource(id = R.drawable.img_photon_deck_hero),
+                                contentDescription = "Photon Prism drawer wallpaper",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        else -> {
+                            Image(
+                                painter = painterResource(id = R.drawable.img_galaxy_hero),
+                                contentDescription = "Photon Audio galaxy drawer wallpaper",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
                             )
                         }
                     }
-
-                    Text(
-                        text = "MENU",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = photonColors.photonGlow,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        photonColors.backdropTop.copy(alpha = 0.62f),
+                                        photonColors.backdropMid.copy(alpha = 0.78f),
+                                        photonColors.backdropBottom.copy(alpha = 0.90f)
+                                    )
+                                )
+                            )
                     )
 
-                    DrawerDestination.entries.forEach { destination ->
-                        val selected = destination == currentDestination
-                        val badgeText = when (destination) {
-                            DrawerDestination.LIBRARY -> "${allTracks.size}"
-                            DrawerDestination.PLAYLISTS -> "${playlists.size}"
-                            DrawerDestination.SMART_QUEUE -> if (smartQueueSuggestions.isNotEmpty()) "${smartQueueSuggestions.size}" else null
-                            DrawerDestination.METADATA_EDITOR -> "TAGS"
-                            DrawerDestination.EQUALIZER -> if (settings.eqEnabled) "ON" else "OFF"
-                            DrawerDestination.SETTINGS -> {
-                                val totalExclusions = excludedFolders.size + settings.excludedFileTypes.size
-                                if (totalExclusions > 0) "$totalExclusions" else null
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                            .windowInsetsPadding(WindowInsets.navigationBars)
+                            .padding(bottom = 16.dp)
+                    ) {
+                        // Brand Header floating over the wallpaper with theme-synced frosted contrast
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = photonColors.glassSurface.copy(alpha = 0.88f),
+                            border = BorderStroke(1.dp, photonColors.photonGlow.copy(alpha = 0.45f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 14.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Photon Audio",
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "${allTracks.size} Tracks · ${playlists.size} Playlists · Local Only",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = photonColors.photonGlow
+                                )
                             }
                         }
 
-                        NavigationDrawerItem(
-                            label = {
-                                Column {
-                                    Text(
-                                        text = destination.label,
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                    )
-                                    Text(
-                                        text = destination.description,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            selected = selected,
-                            onClick = { navigateTo(destination) },
-                            icon = {
-                                Icon(
-                                    imageVector = destination.icon,
-                                    contentDescription = destination.label
-                                )
-                            },
-                            badge = badgeText?.let { count ->
-                                {
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (selected) {
-                                            photonColors.photonGlow.copy(alpha = 0.22f)
-                                        } else {
-                                            MaterialTheme.colorScheme.surfaceContainerHigh
-                                        },
-                                        border = BorderStroke(
-                                            0.8.dp,
-                                            if (selected) photonColors.photonGlow else photonColors.cardBorder
-                                        )
-                                    ) {
-                                        Text(
-                                            text = count,
-                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = if (selected) photonColors.photonGlow else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-                            },
-                            modifier = Modifier
-                                .padding(NavigationDrawerItemDefaults.ItemPadding)
-                                .padding(vertical = 2.dp)
-                                .testTag("drawer_item_${destination.name.lowercase()}"),
-                            colors = NavigationDrawerItemDefaults.colors(
-                                selectedContainerColor = photonColors.photonGlow.copy(alpha = 0.16f),
-                                selectedIconColor = photonColors.photonGlow,
-                                selectedTextColor = photonColors.photonGlow,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurface
-                            )
+                        Text(
+                            text = "MENU",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = photonColors.photonGlow,
+                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 6.dp)
                         )
-                    }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 20.dp),
-                        color = photonColors.cardBorder.copy(alpha = 0.6f)
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
+                        DrawerDestination.entries.forEach { destination ->
+                            val selected = destination == currentDestination
+                            val badgeText = when (destination) {
+                                DrawerDestination.LIBRARY -> "${allTracks.size}"
+                                DrawerDestination.PLAYLISTS -> "${playlists.size}"
+                                DrawerDestination.STATS -> if (totalPlayCount > 0) "$totalPlayCount" else null
+                                DrawerDestination.SMART_QUEUE -> if (smartQueueSuggestions.isNotEmpty()) "${smartQueueSuggestions.size}" else null
+                                DrawerDestination.METADATA_EDITOR -> "TAGS"
+                                DrawerDestination.EQUALIZER -> if (settings.eqEnabled) "ON" else "OFF"
+                                DrawerDestination.SETTINGS -> {
+                                    val totalExclusions = excludedFolders.size + settings.excludedFileTypes.size
+                                    if (totalExclusions > 0) "$totalExclusions" else null
+                                }
+                            }
 
-                    NavigationDrawerItem(
-                        label = { Text("Auto-Scan Music Now", style = MaterialTheme.typography.titleSmall) },
-                        selected = false,
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            viewModel.scanWatchedFoldersNow()
-                        },
-                        icon = {
-                            Icon(
-                                Icons.Rounded.Radar,
-                                contentDescription = "Scan music now",
-                                tint = photonColors.losslessBadge
-                            )
-                        },
-                        modifier = Modifier
-                            .padding(NavigationDrawerItemDefaults.ItemPadding)
-                            .testTag("drawer_scan_now_item")
-                    )
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (selected) drawerSelectedBg else drawerItemBg,
+                                border = BorderStroke(
+                                    width = if (selected) 1.3.dp else 0.8.dp,
+                                    color = if (selected) photonColors.photonGlow else photonColors.cardBorder.copy(alpha = 0.65f)
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                NavigationDrawerItem(
+                                    label = {
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                text = destination.label,
+                                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = if (selected) drawerHighlightText else Color.White
+                                            )
+                                            Text(
+                                                text = destination.description,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = if (selected) Color.White.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.74f)
+                                            )
+                                        }
+                                    },
+                                    selected = selected,
+                                    onClick = { navigateTo(destination) },
+                                    icon = {
+                                        Icon(
+                                            imageVector = destination.icon,
+                                            contentDescription = destination.label,
+                                            tint = if (selected) drawerHighlightText else Color.White.copy(alpha = 0.9f)
+                                        )
+                                    },
+                                    badge = badgeText?.let { count ->
+                                        {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = if (selected) {
+                                                    photonColors.photonGlow.copy(alpha = 0.28f)
+                                                } else {
+                                                    photonColors.backdropMid.copy(alpha = 0.78f)
+                                                },
+                                                border = BorderStroke(
+                                                    0.9.dp,
+                                                    if (selected) drawerHighlightText else photonColors.cardBorder
+                                                )
+                                            ) {
+                                                Text(
+                                                    text = count,
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                    color = Color.White,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier.testTag("drawer_item_${destination.name.lowercase()}"),
+                                    colors = NavigationDrawerItemDefaults.colors(
+                                        selectedContainerColor = Color.Transparent,
+                                        unselectedContainerColor = Color.Transparent,
+                                        selectedIconColor = drawerHighlightText,
+                                        selectedTextColor = drawerHighlightText,
+                                        unselectedIconColor = Color.White.copy(alpha = 0.9f),
+                                        unselectedTextColor = Color.White
+                                    )
+                                )
+                            }
+                        }
 
-                    NavigationDrawerItem(
-                        label = {
-                            Text(
-                                text = if (playbackState.sleepTimer.isActive) {
-                                    "Sleep Timer (${playbackState.sleepTimer.label})"
-                                } else {
-                                    "Sleep Timer"
+                        Spacer(modifier = Modifier.height(10.dp))
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 18.dp),
+                            color = photonColors.photonGlow.copy(alpha = 0.38f)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = drawerItemBg,
+                            border = BorderStroke(0.8.dp, photonColors.losslessBadge.copy(alpha = 0.45f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            NavigationDrawerItem(
+                                label = {
+                                    Text(
+                                        text = "Auto-Scan Music Now",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = Color.White
+                                    )
                                 },
-                                style = MaterialTheme.typography.titleSmall
+                                selected = false,
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    viewModel.scanWatchedFoldersNow()
+                                },
+                                icon = {
+                                    Icon(
+                                        Icons.Rounded.Radar,
+                                        contentDescription = "Scan music now",
+                                        tint = photonColors.losslessBadge
+                                    )
+                                },
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.testTag("drawer_scan_now_item"),
+                                colors = NavigationDrawerItemDefaults.colors(
+                                    unselectedContainerColor = Color.Transparent,
+                                    unselectedTextColor = Color.White
+                                )
                             )
-                        },
-                        selected = false,
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            showSleepTimerDialog = true
-                        },
-                        icon = {
-                            Icon(
-                                Icons.Rounded.Bedtime,
-                                contentDescription = "Sleep timer",
-                                tint = if (playbackState.sleepTimer.isActive) photonColors.goldBadge else MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = drawerItemBg,
+                            border = BorderStroke(
+                                0.8.dp,
+                                if (playbackState.sleepTimer.isActive) {
+                                    photonColors.goldBadge.copy(alpha = 0.7f)
+                                } else {
+                                    photonColors.cardBorder.copy(alpha = 0.6f)
+                                }
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            NavigationDrawerItem(
+                                label = {
+                                    Text(
+                                        text = if (playbackState.sleepTimer.isActive) {
+                                            "Sleep Timer (${playbackState.sleepTimer.label})"
+                                        } else {
+                                            "Sleep Timer"
+                                        },
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = Color.White
+                                    )
+                                },
+                                selected = false,
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    showSleepTimerDialog = true
+                                },
+                                icon = {
+                                    Icon(
+                                        Icons.Rounded.Bedtime,
+                                        contentDescription = "Sleep timer",
+                                        tint = if (playbackState.sleepTimer.isActive) photonColors.goldBadge else Color.White.copy(alpha = 0.9f)
+                                    )
+                                },
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.testTag("drawer_sleep_timer_item"),
+                                colors = NavigationDrawerItemDefaults.colors(
+                                    unselectedContainerColor = Color.Transparent,
+                                    unselectedTextColor = Color.White
+                                )
                             )
-                        },
-                        modifier = Modifier
-                            .padding(NavigationDrawerItemDefaults.ItemPadding)
-                            .testTag("drawer_sleep_timer_item")
-                    )
+                        }
+                    }
                 }
             }
         }
@@ -607,14 +742,26 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                         when (destination) {
                             DrawerDestination.LIBRARY -> LibraryScreen(
                                 tracks = tracks,
+                                allLibraryTracks = allTracks,
+                                favoriteTracks = favoriteTracks,
+                                recentlyPlayedTracks = recentlyPlayedTracks,
+                                playlists = playlists,
+                                selectedPlaylistId = selectedPlaylistId,
+                                selectedPlaylistTracks = selectedPlaylistTracks,
                                 totalLibraryCount = allTracks.size,
                                 currentTrackId = playbackState.currentTrack?.id,
+                                currentTrack = playbackState.currentTrack,
+                                signalInfo = playbackState.signalInfo,
                                 isPlaying = playbackState.isPlaying,
                                 searchQuery = searchQuery,
+                                searchHistory = settings.searchHistory,
                                 sortOption = settings.sortOption,
                                 sortDirection = settings.sortDirection,
                                 monitorStatus = monitorStatus,
                                 onSearchQueryChange = viewModel::updateSearchQuery,
+                                onCommitSearchQuery = viewModel::commitSearchQuery,
+                                onRemoveSearchHistoryItem = viewModel::removeSearchHistoryItem,
+                                onClearSearchHistory = viewModel::clearSearchHistory,
                                 onSortOptionSelect = viewModel::selectSortOption,
                                 onToggleSortDirection = viewModel::toggleSortDirection,
                                 onImportFilesClick = launchImportAudio,
@@ -623,10 +770,20 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                 onGenerateStudioWav = viewModel::generateStarterWavTracks,
                                 onPlayTrack = { list, idx -> viewModel.playTracks(list, idx) },
                                 onShuffleAll = viewModel::playShuffled,
-                                onReorderTracks = viewModel::persistLibraryOrder,
+                                onToggleFavorite = viewModel::toggleFavorite,
                                 onAutoCompleteMetadata = openTrackInMetadataEditor,
                                 onAddToPlaylist = { trackForPlaylistPicker = it },
                                 onDeleteTrack = viewModel::deleteTrack,
+                                onSelectPlaylist = viewModel::selectPlaylist,
+                                onCreatePlaylist = viewModel::createPlaylist,
+                                onRenamePlaylist = viewModel::renamePlaylist,
+                                onDeletePlaylist = viewModel::deletePlaylist,
+                                onAddTrackToPlaylist = viewModel::addTrackToPlaylist,
+                                onRemoveTrackFromPlaylist = viewModel::removeTrackFromPlaylist,
+                                onReorderPlaylistTracks = viewModel::persistPlaylistOrder,
+                                onOpenStats = { currentDestination = DrawerDestination.STATS },
+                                onOpenNowPlaying = { nowPlayingExpanded = true },
+                                onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
                                 onActivePageChanged = { libraryActivePage = it }
                             )
 
@@ -649,6 +806,19 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                 onAutoCompleteMetadata = openTrackInMetadataEditor
                             )
 
+                            DrawerDestination.STATS -> ListeningStatsScreen(
+                                totalPlayCount = totalPlayCount,
+                                totalLibraryTracks = allTracks.size,
+                                favoriteTracks = favoriteTracks,
+                                mostPlayedTracks = mostPlayedTracks,
+                                genreStats = genrePlayStats,
+                                artistStats = artistPlayStats,
+                                currentTrackId = playbackState.currentTrack?.id,
+                                isPlaying = playbackState.isPlaying,
+                                onPlayTracks = viewModel::playTracks,
+                                onToggleFavorite = viewModel::toggleFavorite
+                            )
+
                             DrawerDestination.SMART_QUEUE -> SmartQueueScreen(
                                 playbackState = playbackState,
                                 suggestions = smartQueueSuggestions,
@@ -667,6 +837,15 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                 selectedTrackId = editorSelectedTrackId,
                                 currentlyPlayingTrackId = playbackState.currentTrack?.id,
                                 searchState = editorSearchState,
+                                isApiUnlocked = isApiUnlocked,
+                                hasApiPassword = settings.hasApiPassword,
+                                onRequestUnlockApi = {
+                                    apiPasswordDialogMode = if (settings.hasApiPassword) {
+                                        ApiPasswordDialogMode.UNLOCK
+                                    } else {
+                                        ApiPasswordDialogMode.CREATE
+                                    }
+                                },
                                 pickedCoverOverrideUri = pickedCoverOverrideUri,
                                 onClearPickedCoverOverride = { pickedCoverOverrideUri = null },
                                 onSelectTrack = viewModel::selectTrackForEditor,
@@ -679,28 +858,67 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                             )
 
                             DrawerDestination.EQUALIZER -> EqualizerScreen(
-                                eqEnabled = settings.eqEnabled,
-                                activePresetName = settings.eqPresetName,
-                                bandRatios = settings.eqBandRatios,
-                                bassBoostStrength = settings.bassBoostStrength,
-                                virtualizerStrength = settings.virtualizerStrength,
+                                settings = settings,
                                 telemetry = playbackState.eqTelemetry,
+                                signalInfo = playbackState.signalInfo,
+                                currentTrack = playbackState.currentTrack,
+                                spectrumFlow = viewModel.spectrumState,
                                 onToggleEq = viewModel::setEqEnabled,
                                 onSelectPreset = viewModel::applyEqPreset,
                                 onBandChange = viewModel::updateEqBand,
-                                onSpatialChange = viewModel::updateSpatialEffects
+                                onSaveCustomPreset = viewModel::saveCustomEqPreset,
+                                onDeleteCustomPreset = viewModel::deleteCustomEqPreset,
+                                onSpatialChange = viewModel::updateSpatialEffects,
+                                onSetPreAmpDb = viewModel::setPreAmpDb,
+                                onSetSoftLimiterEnabled = viewModel::setSoftLimiterEnabled,
+                                onSetLoudnessNormalizerEnabled = viewModel::setLoudnessNormalizerEnabled,
+                                onSetStereoBalance = viewModel::setStereoBalance,
+                                onSetMonoAudioEnabled = viewModel::setMonoAudioEnabled,
+                                onSetCrossfeedStrength = viewModel::setCrossfeedStrength,
+                                onSetReverbPreset = viewModel::setReverbPreset,
+                                onSetAutoEqByOutputEnabled = viewModel::setAutoEqByOutputEnabled,
+                                onSetOutputRouteEqPreset = viewModel::setOutputRouteEqPreset,
+                                onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile
                             )
 
                             DrawerDestination.SETTINGS -> SettingsAndFoldersScreen(
                                 settings = settings,
                                 sleepTimer = playbackState.sleepTimer,
+                                currentTrack = playbackState.currentTrack,
+                                isPlaying = playbackState.isPlaying,
+                                shuffleEnabled = playbackState.shuffleEnabled,
                                 watchedFolders = watchedFolders,
                                 excludedFolders = excludedFolders,
                                 monitorStatus = monitorStatus,
+                                isApiUnlocked = isApiUnlocked,
                                 isCheckingUpdate = isCheckingUpdate,
                                 updateCheckStatus = updateCheckStatus,
+                                onRequestUnlockApi = {
+                                    apiPasswordDialogMode = if (settings.hasApiPassword) {
+                                        ApiPasswordDialogMode.UNLOCK
+                                    } else {
+                                        ApiPasswordDialogMode.CREATE
+                                    }
+                                },
+                                onLockApi = viewModel::lockApiAccess,
+                                onRequestChangeApiPassword = {
+                                    apiPasswordDialogMode = ApiPasswordDialogMode.CHANGE
+                                },
                                 onSetDarkMode = viewModel::setDarkMode,
+                                onSelectCosmicSkin = viewModel::setCosmicThemeSkin,
+                                onSetCustomThemeColors = viewModel::setCustomThemeColors,
+                                onSetDynamicAlbumColors = viewModel::setDynamicAlbumColorsEnabled,
+                                onSelectAppFont = viewModel::setAppFont,
+                                onSelectWallpaperPreset = viewModel::setWallpaperPreset,
+                                onPickCustomWallpaper = launchPickCustomWallpaper,
+                                onSetWallpaperDimAlpha = viewModel::setWallpaperDimAlpha,
+                                onSetWidgetThemeMode = viewModel::setWidgetThemeMode,
+                                onSetWidgetGlassOpacity = viewModel::setWidgetGlassOpacity,
+                                onWidgetPinnedFeedback = { msg ->
+                                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                                },
                                 onSetCrossfadeSeconds = viewModel::setCrossfadeSeconds,
+                                onSetCrossfadeCurve = viewModel::setCrossfadeCurve,
                                 onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
                                 onSetSkipSilenceEnabled = viewModel::setSkipSilenceEnabled,
                                 onSetPauseOnAudioDisconnect = viewModel::setPauseOnAudioDisconnect,
@@ -760,7 +978,20 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                             currentDestination = DrawerDestination.SMART_QUEUE
                         },
                         onOpenMetadataAutoComplete = openTrackInMetadataEditor,
-                        onAddToPlaylist = { trackForPlaylistPicker = it }
+                        onAddToPlaylist = { trackForPlaylistPicker = it },
+                        onToggleFavorite = viewModel::toggleFavorite,
+                        onJumpToQueueIndex = viewModel::jumpToQueueIndex,
+                        onReorderQueue = viewModel::reorderActiveQueue,
+                        onRemoveQueueIndex = viewModel::removeTrackFromActiveQueue,
+                        onClearUpcomingQueue = viewModel::clearUpcomingQueue,
+                        onSaveQueueAsPlaylist = viewModel::saveActiveQueueAsPlaylist,
+                        onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
+                        onSetPlaybackPitch = viewModel::setPlaybackPitch,
+                        onResetTempoAndPitch = viewModel::resetTempoAndPitch,
+                        onSetAbLoopStart = viewModel::setAbLoopStart,
+                        onSetAbLoopEnd = viewModel::setAbLoopEnd,
+                        onClearAbLoop = viewModel::clearAbLoop,
+                        onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile
                     )
                 }
             }
@@ -858,8 +1089,185 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
             track = track,
             playlists = playlists,
             onSelectPlaylist = { plId -> viewModel.addTrackToPlaylist(plId, track) },
-            onCreateAndAdd = { name -> viewModel.createPlaylistAndAddTrack(name, track) },
+            onCreateAndAdd = { name, desc -> viewModel.createPlaylistAndAddTrack(name, desc, track) },
             onDismiss = { trackForPlaylistPicker = null }
         )
     }
+
+    // Password-Protected API Access Dialog (Create / Unlock / Change Password)
+    apiPasswordDialogMode?.let { mode ->
+        ApiPasswordDialog(
+            mode = mode,
+            onCreatePassword = { pass, confirm, onErr ->
+                viewModel.createApiPassword(pass, confirm) { err ->
+                    if (err == null) apiPasswordDialogMode = null else onErr(err)
+                }
+            },
+            onUnlock = { pass, onErr ->
+                viewModel.unlockApiWithPassword(pass) { err ->
+                    if (err == null) apiPasswordDialogMode = null else onErr(err)
+                }
+            },
+            onChangePassword = { curr, next, confirm, onErr ->
+                viewModel.changeApiPassword(curr, next, confirm) { err ->
+                    if (err == null) apiPasswordDialogMode = null else onErr(err)
+                }
+            },
+            onDismiss = { apiPasswordDialogMode = null }
+        )
+    }
+}
+
+private enum class ApiPasswordDialogMode {
+    CREATE,
+    UNLOCK,
+    CHANGE
+}
+
+@Composable
+private fun ApiPasswordDialog(
+    mode: ApiPasswordDialogMode,
+    onCreatePassword: (String, String, (String) -> Unit) -> Unit,
+    onUnlock: (String, (String) -> Unit) -> Unit,
+    onChangePassword: (String, String, String, (String) -> Unit) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val photonColors = LocalPhotonColors.current
+    var currentPass by remember(mode) { mutableStateOf("") }
+    var password by remember(mode) { mutableStateOf("") }
+    var confirmPass by remember(mode) { mutableStateOf("") }
+    var showPassword by remember(mode) { mutableStateOf(false) }
+    var errorMessage by remember(mode) { mutableStateOf<String?>(null) }
+
+    val visualTransform = if (showPassword) VisualTransformation.None else PasswordVisualTransformation()
+    val visibilityToggle: @Composable () -> Unit = {
+        IconButton(onClick = { showPassword = !showPassword }) {
+            Icon(
+                imageVector = if (showPassword) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                contentDescription = if (showPassword) "Hide password" else "Show password"
+            )
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Rounded.Lock,
+                contentDescription = null,
+                tint = photonColors.goldBadge,
+                modifier = Modifier.size(28.dp)
+            )
+        },
+        title = {
+            Text(
+                text = when (mode) {
+                    ApiPasswordDialogMode.CREATE -> "Set API Access Password"
+                    ApiPasswordDialogMode.UNLOCK -> "Unlock Hidden API"
+                    ApiPasswordDialogMode.CHANGE -> "Change API Password"
+                },
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = when (mode) {
+                        ApiPasswordDialogMode.CREATE -> "Create a local password to protect and hide external API controls. Stored strictly on-device using salted PBKDF2 hashing."
+                        ApiPasswordDialogMode.UNLOCK -> "Enter your password to access hidden external API endpoints and lookup settings."
+                        ApiPasswordDialogMode.CHANGE -> "Enter your current password and choose a new local password."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (mode == ApiPasswordDialogMode.CHANGE) {
+                    OutlinedTextField(
+                        value = currentPass,
+                        onValueChange = {
+                            currentPass = it
+                            errorMessage = null
+                        },
+                        label = { Text("Current Password") },
+                        singleLine = true,
+                        visualTransformation = visualTransform,
+                        trailingIcon = visibilityToggle,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("api_current_password_input")
+                    )
+                }
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = {
+                        password = it
+                        errorMessage = null
+                    },
+                    label = {
+                        Text(
+                            when (mode) {
+                                ApiPasswordDialogMode.UNLOCK -> "API Password"
+                                ApiPasswordDialogMode.CREATE -> "New Password (min 4 chars)"
+                                ApiPasswordDialogMode.CHANGE -> "New Password (min 4 chars)"
+                            }
+                        )
+                    },
+                    singleLine = true,
+                    visualTransformation = visualTransform,
+                    trailingIcon = visibilityToggle,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("api_password_input")
+                )
+
+                if (mode == ApiPasswordDialogMode.CREATE || mode == ApiPasswordDialogMode.CHANGE) {
+                    OutlinedTextField(
+                        value = confirmPass,
+                        onValueChange = {
+                            confirmPass = it
+                            errorMessage = null
+                        },
+                        label = { Text("Confirm Password") },
+                        singleLine = true,
+                        visualTransformation = visualTransform,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("api_confirm_password_input")
+                    )
+                }
+
+                errorMessage?.let { err ->
+                    Text(
+                        text = err,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    when (mode) {
+                        ApiPasswordDialogMode.CREATE -> onCreatePassword(password, confirmPass) { errorMessage = it }
+                        ApiPasswordDialogMode.UNLOCK -> onUnlock(password) { errorMessage = it }
+                        ApiPasswordDialogMode.CHANGE -> onChangePassword(currentPass, password, confirmPass) { errorMessage = it }
+                    }
+                },
+                modifier = Modifier.testTag("api_password_submit_btn")
+            ) {
+                Text(
+                    when (mode) {
+                        ApiPasswordDialogMode.CREATE -> "Set & Unlock"
+                        ApiPasswordDialogMode.UNLOCK -> "Unlock"
+                        ApiPasswordDialogMode.CHANGE -> "Update"
+                    }
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

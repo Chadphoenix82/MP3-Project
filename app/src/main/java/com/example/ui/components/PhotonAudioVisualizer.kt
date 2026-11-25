@@ -298,8 +298,8 @@ fun PhotonAudioVisualizer(
                     VisualizerStyle.EQ_BANDS -> {
                         val bands = spectrum.eqBandLevels
                         val count = bands.size.coerceAtLeast(1)
-                        val gap = 12.dp.toPx()
-                        val colW = (w - gap * (count - 1)) / count
+                        val gap = if (count > 6) 5.dp.toPx() else 12.dp.toPx()
+                        val colW = ((w - gap * (count - 1)) / count).coerceAtLeast(4f)
                         val segments = 9
                         val segGap = 2.5.dp.toPx()
                         val segH = (h - segGap * (segments - 1)) / segments
@@ -330,12 +330,18 @@ fun PhotonAudioVisualizer(
                 }
             }
 
-            // 5-Band Equalizer Center Frequency Footer (synced with EQ hardware bands + dB gains)
+            // Equalizer Center Frequency Footer (5 landmark bands across 10-band EQ range)
+            val displayIndices = if (spectrum.bandFrequenciesHz.size >= 10) {
+                listOf(0, 2, 5, 7, 9)
+            } else {
+                spectrum.bandFrequenciesHz.indices.take(5)
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                spectrum.bandFrequenciesHz.take(5).forEachIndexed { idx, hz ->
+                displayIndices.forEach { idx ->
+                    val hz = spectrum.bandFrequenciesHz.getOrElse(idx) { 1000 }
                     val ratio = if (eqEnabled) eqBandRatios.getOrElse(idx) { 0f } else 0f
                     val db = (ratio * 12f).roundToInt()
                     val dbLabel = when {

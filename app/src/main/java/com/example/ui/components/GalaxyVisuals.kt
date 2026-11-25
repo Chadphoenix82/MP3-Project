@@ -41,10 +41,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Image
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.R
+import com.example.ui.theme.AppWallpaperPreset
 import com.example.ui.theme.LocalPhotonColors
+import com.example.ui.theme.LocalPhotonWallpaper
+import java.io.File
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -63,9 +67,12 @@ private data class StarSeed(
 @Composable
 fun GalaxyBackdrop(
     modifier: Modifier = Modifier,
+    adaptiveTint: Color? = null,
     content: @Composable () -> Unit
 ) {
     val photonColors = LocalPhotonColors.current
+    val wallpaper = LocalPhotonWallpaper.current
+    val context = LocalContext.current
     val stars = remember {
         List(36) { idx ->
             val seed = (idx * 7919 + 104729) % 1000
@@ -90,36 +97,92 @@ fun GalaxyBackdrop(
         label = "star_pulse"
     )
 
+    val topBg = adaptiveTint ?: photonColors.backdropTop
+    val midBg = adaptiveTint?.copy(alpha = 0.85f) ?: photonColors.backdropMid
+    val isPureBlackOled = photonColors.backdropTop == Color.Black &&
+        wallpaper.preset == AppWallpaperPreset.COSMIC_CANVAS &&
+        adaptiveTint == null
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        photonColors.backdropTop,
-                        photonColors.backdropMid,
+                        topBg,
+                        midBg,
                         photonColors.backdropBottom
                     )
                 )
             )
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
+        when (wallpaper.preset) {
+            AppWallpaperPreset.GALAXY_NEBULA -> {
+                Image(
+                    painter = painterResource(id = R.drawable.img_galaxy_hero),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(topBg.copy(alpha = wallpaper.dimAlpha))
+                )
+            }
+            AppWallpaperPreset.PHOTON_PRISM -> {
+                Image(
+                    painter = painterResource(id = R.drawable.img_photon_deck_hero),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(topBg.copy(alpha = wallpaper.dimAlpha))
+                )
+            }
+            AppWallpaperPreset.CUSTOM_PHOTO -> {
+                val photoFile = wallpaper.customPhotoPath?.let { File(it) }?.takeIf { it.exists() }
+                if (photoFile != null) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(photoFile)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(topBg.copy(alpha = wallpaper.dimAlpha))
+                    )
+                }
+            }
+            AppWallpaperPreset.COSMIC_CANVAS -> Unit
+        }
 
-            // Upper-right Photon Cyan nebula bloom
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        photonColors.photonGlow.copy(alpha = 0.16f),
-                        Color.Transparent
+        if (!isPureBlackOled) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+
+                // Upper-right Photon Cyan nebula bloom
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            photonColors.photonGlow.copy(alpha = 0.16f),
+                            Color.Transparent
+                        ),
+                        center = Offset(w * 0.86f, h * 0.12f),
+                        radius = w * 0.72f
                     ),
                     center = Offset(w * 0.86f, h * 0.12f),
                     radius = w * 0.72f
-                ),
-                center = Offset(w * 0.86f, h * 0.12f),
-                radius = w * 0.72f
-            )
+                )
 
             // Lower-left Astral Violet cosmic cloud
             drawCircle(
@@ -143,16 +206,17 @@ fun GalaxyBackdrop(
                 style = Stroke(width = 1.2.dp.toPx())
             )
 
-            // Twinkling starlight field
-            stars.forEach { star ->
-                val twinkle = 0.25f + 0.55f * ((sin(pulsePhase + star.phaseOffset) + 1f) / 2f)
-                val x = ((star.xFrac + (pulsePhase / (2f * PI.toFloat())) * star.driftSpeed) % 1f) * w
-                val y = star.yFrac * h
-                drawCircle(
-                    color = photonColors.starColor.copy(alpha = twinkle * 0.65f),
-                    radius = star.radiusDp.dp.toPx(),
-                    center = Offset(x, y)
-                )
+                // Twinkling starlight field
+                stars.forEach { star ->
+                    val twinkle = 0.25f + 0.55f * ((sin(pulsePhase + star.phaseOffset) + 1f) / 2f)
+                    val x = ((star.xFrac + (pulsePhase / (2f * PI.toFloat())) * star.driftSpeed) % 1f) * w
+                    val y = star.yFrac * h
+                    drawCircle(
+                        color = photonColors.starColor.copy(alpha = twinkle * 0.65f),
+                        radius = star.radiusDp.dp.toPx(),
+                        center = Offset(x, y)
+                    )
+                }
             }
         }
         content()

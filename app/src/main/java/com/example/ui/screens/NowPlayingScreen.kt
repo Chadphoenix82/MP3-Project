@@ -2,14 +2,27 @@ package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,10 +51,14 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BluetoothAudio
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.DirectionsCar
 import androidx.compose.material.icons.rounded.Equalizer
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Loop
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
@@ -51,6 +68,7 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Speaker
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Swipe
 import androidx.compose.material.icons.rounded.Usb
 import androidx.compose.material3.Icon
@@ -62,6 +80,8 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -70,11 +90,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -89,11 +115,17 @@ import com.example.player.PlaybackUiState
 import com.example.player.RepeatModeState
 import com.example.ui.components.AudioCodecInspectorSheet
 import com.example.ui.components.AudioFormatBadge
+import com.example.ui.components.DrivingModeOverlay
 import com.example.ui.components.GalaxyBackdrop
+import com.example.ui.components.LiveQueueSheet
 import com.example.ui.components.PhotonAlbumArt
 import com.example.ui.components.PhotonAudioVisualizer
+import com.example.ui.components.ProPlaybackStudioSheet
+import com.example.ui.components.WaveformScrubber
 import com.example.ui.components.formatDurationMs
 import com.example.ui.components.formatSampleRate
+import com.example.ui.theme.AdaptiveArtworkPalette
+import com.example.ui.theme.AlbumArtColorExtractor
 import com.example.ui.theme.LocalPhotonColors
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.abs
@@ -146,10 +178,19 @@ fun PhotonMiniPlayerBar(
                 )
             }
             .clickable(onClick = onExpandClick),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shadowElevation = 10.dp,
-        border = BorderStroke(1.1.dp, photonColors.photonGlow.copy(alpha = 0.6f))
+        shape = RoundedCornerShape(22.dp),
+        color = lerp(photonColors.backdropTop, photonColors.glassSurface, 0.72f).copy(alpha = 0.94f),
+        shadowElevation = 14.dp,
+        border = BorderStroke(
+            width = 1.2.dp,
+            brush = Brush.horizontalGradient(
+                colors = listOf(
+                    photonColors.photonGlow.copy(alpha = 0.85f),
+                    photonColors.nebulaAccent.copy(alpha = 0.65f),
+                    photonColors.photonGlow.copy(alpha = 0.75f)
+                )
+            )
+        )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
@@ -261,19 +302,74 @@ fun NowPlayingScreen(
     onOpenEqualizer: () -> Unit,
     onOpenSmartQueue: () -> Unit,
     onOpenMetadataAutoComplete: (TrackEntity) -> Unit,
-    onAddToPlaylist: (TrackEntity) -> Unit
+    onAddToPlaylist: (TrackEntity) -> Unit,
+    onToggleFavorite: (TrackEntity) -> Unit,
+    onJumpToQueueIndex: (Int) -> Unit,
+    onReorderQueue: (List<TrackEntity>) -> Unit,
+    onRemoveQueueIndex: (Int) -> Unit,
+    onClearUpcomingQueue: () -> Unit,
+    onSaveQueueAsPlaylist: (String, String) -> Unit,
+    onSetPlaybackSpeed: (Float) -> Unit,
+    onSetPlaybackPitch: (Float) -> Unit,
+    onResetTempoAndPitch: () -> Unit,
+    onSetAbLoopStart: () -> Unit,
+    onSetAbLoopEnd: () -> Unit,
+    onClearAbLoop: () -> Unit,
+    onUpdateTrackSoundProfile: (TrackEntity, Float, String?) -> Unit = { _, _, _ -> }
 ) {
     BackHandler(onBack = onCollapse)
 
     val track = playbackState.currentTrack
-    val photonColors = LocalPhotonColors.current
+    val basePhotonColors = LocalPhotonColors.current
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val eqEnabled = settings.eqEnabled
     val eqPresetName = settings.eqPresetName
     val eqBandRatios = settings.eqBandRatios
     val gestureControlsEnabled = settings.gestureControlsEnabled
 
+    // Dynamic Album-Art Adaptive Glow extraction
+    var extractedPalette by remember { mutableStateOf<AdaptiveArtworkPalette?>(null) }
+    LaunchedEffect(track?.artworkUri, settings.dynamicAlbumColorsEnabled, basePhotonColors) {
+        extractedPalette = if (settings.dynamicAlbumColorsEnabled && !track?.artworkUri.isNullOrBlank()) {
+            AlbumArtColorExtractor.extractPalette(
+                context = context,
+                artworkUri = track?.artworkUri,
+                fallbackPrimary = basePhotonColors.photonGlow,
+                fallbackSecondary = basePhotonColors.nebulaAccent,
+                fallbackBackdrop = basePhotonColors.backdropTop
+            )
+        } else {
+            null
+        }
+    }
+
+    val animatedPrimaryGlow by animateColorAsState(
+        targetValue = extractedPalette?.primaryGlow ?: basePhotonColors.photonGlow,
+        animationSpec = tween(durationMillis = 620),
+        label = "adaptive_primary_glow"
+    )
+    val animatedSecondaryGlow by animateColorAsState(
+        targetValue = extractedPalette?.secondaryGlow ?: basePhotonColors.nebulaAccent,
+        animationSpec = tween(durationMillis = 620),
+        label = "adaptive_secondary_glow"
+    )
+    val animatedBackdropTint by animateColorAsState(
+        targetValue = extractedPalette?.backdropTint ?: basePhotonColors.backdropTop,
+        animationSpec = tween(durationMillis = 650),
+        label = "adaptive_backdrop_tint"
+    )
+    val photonColors = remember(basePhotonColors, animatedPrimaryGlow, animatedSecondaryGlow) {
+        basePhotonColors.copy(
+            photonGlow = animatedPrimaryGlow,
+            nebulaAccent = animatedSecondaryGlow
+        )
+    }
+
     var showCodecInspector by remember { mutableStateOf(false) }
+    var showLiveQueueSheet by remember { mutableStateOf(false) }
+    var showStudioSheet by remember { mutableStateOf(false) }
+    var showDrivingMode by remember { mutableStateOf(false) }
     var gestureAxis by remember { mutableStateOf(GestureAxis.NONE) }
     var horizontalOffsetPx by remember { mutableFloatStateOf(0f) }
     var activeVolumeFraction by remember { mutableFloatStateOf(onGetVolumeFraction()) }
@@ -286,12 +382,15 @@ fun NowPlayingScreen(
         label = "artwork_swipe_x"
     )
 
-    var isScrubbing by remember { mutableStateOf(false) }
-    var scrubPositionMs by remember { mutableFloatStateOf(0f) }
-    val displayPosMs = if (isScrubbing) scrubPositionMs.toLong() else playbackState.positionMs
+    var scrubPreviewMs by remember { mutableStateOf<Long?>(null) }
+    val displayPosMs = scrubPreviewMs ?: playbackState.positionMs
     val durationMs = playbackState.durationMs.coerceAtLeast(1000L)
 
-    GalaxyBackdrop(modifier = Modifier.fillMaxSize()) {
+    CompositionLocalProvider(LocalPhotonColors provides photonColors) {
+        GalaxyBackdrop(
+            modifier = Modifier.fillMaxSize(),
+            adaptiveTint = if (extractedPalette != null) animatedBackdropTint else null
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -341,15 +440,42 @@ fun NowPlayingScreen(
                     }
                 }
 
-                IconButton(
-                    onClick = onOpenSleepTimer,
-                    modifier = Modifier.testTag("now_playing_sleep_timer_btn")
-                ) {
-                    Icon(
-                        Icons.Rounded.Bedtime,
-                        contentDescription = "Sleep Timer",
-                        tint = if (playbackState.sleepTimer.isActive) photonColors.goldBadge else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            showDrivingMode = true
+                        },
+                        modifier = Modifier.testTag("now_playing_driving_mode_btn")
+                    ) {
+                        Icon(
+                            Icons.Rounded.DirectionsCar,
+                            contentDescription = "Open Driving Mode",
+                            tint = photonColors.photonGlow
+                        )
+                    }
+                    if (track != null) {
+                        IconButton(
+                            onClick = { onOpenMetadataAutoComplete(track) },
+                            modifier = Modifier.testTag("now_playing_autotag_btn")
+                        ) {
+                            Icon(
+                                Icons.Rounded.AutoAwesome,
+                                contentDescription = "Edit Track Metadata",
+                                tint = photonColors.nebulaAccent
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onOpenSleepTimer,
+                        modifier = Modifier.testTag("now_playing_sleep_timer_btn")
+                    ) {
+                        Icon(
+                            Icons.Rounded.Bedtime,
+                            contentDescription = "Sleep Timer",
+                            tint = if (playbackState.sleepTimer.isActive) photonColors.goldBadge else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -419,6 +545,42 @@ fun NowPlayingScreen(
                     },
                 contentAlignment = Alignment.Center
             ) {
+                val deckPulseTransition = rememberInfiniteTransition(label = "deck_stage_aura")
+                val auraBreath by deckPulseTransition.animateFloat(
+                    initialValue = 0.72f,
+                    targetValue = 1.0f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = if (playbackState.isPlaying) 1900 else 3600, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "aura_breath"
+                )
+
+                // Holographic Photon Deck Stage Aura & Precision Orbital Ring
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val center = Offset(size.width / 2f, size.height / 2f)
+                    val maxRadius = size.minDimension * 0.52f
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                photonColors.photonGlow.copy(alpha = (if (playbackState.isPlaying) 0.28f else 0.14f) * auraBreath),
+                                photonColors.nebulaAccent.copy(alpha = (if (playbackState.isPlaying) 0.16f else 0.08f) * auraBreath),
+                                Color.Transparent
+                            ),
+                            center = center,
+                            radius = maxRadius
+                        ),
+                        center = center,
+                        radius = maxRadius
+                    )
+                    drawCircle(
+                        color = photonColors.photonGlow.copy(alpha = 0.18f * auraBreath),
+                        radius = maxRadius * 0.92f,
+                        center = center,
+                        style = Stroke(width = 1.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+
                 PhotonAlbumArt(
                     artworkUri = track.artworkUri,
                     contentDescription = "Album artwork for ${track.title}",
@@ -563,13 +725,47 @@ fun NowPlayingScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(
-                    text = track.title,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Spacer(modifier = Modifier.width(44.dp))
+                    Text(
+                        text = track.title,
+                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    val heartScale by animateFloatAsState(
+                        targetValue = if (track.isFavorite) 1.18f else 1.0f,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                        label = "heart_scale"
+                    )
+                    IconButton(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onToggleFavorite(track)
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("now_playing_favorite_btn")
+                    ) {
+                        Icon(
+                            imageVector = if (track.isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            contentDescription = if (track.isFavorite) "Remove from Favorites" else "Add to Favorites",
+                            tint = if (track.isFavorite) Color(0xFFFF5C8A) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .size(26.dp)
+                                .graphicsLayer {
+                                    scaleX = heartScale
+                                    scaleY = heartScale
+                                }
+                        )
+                    }
+                }
                 Text(
                     text = "${track.artist} • ${track.album}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -678,40 +874,64 @@ fun NowPlayingScreen(
                 }
             }
 
-            // Seek Scrubber
+            // Interactive Acoustic Waveform Scrubber
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 560.dp)
+                    .widthIn(max = 560.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Slider(
-                    value = displayPosMs.toFloat().coerceIn(0f, durationMs.toFloat()),
-                    onValueChange = {
-                        isScrubbing = true
-                        scrubPositionMs = it
-                    },
-                    onValueChangeFinished = {
-                        onSeekTo(scrubPositionMs.toLong())
-                        isScrubbing = false
-                    },
-                    valueRange = 0f..durationMs.toFloat(),
-                    modifier = Modifier.testTag("now_playing_seek_slider"),
-                    colors = SliderDefaults.colors(
-                        thumbColor = photonColors.photonGlow,
-                        activeTrackColor = photonColors.photonGlow,
-                        inactiveTrackColor = photonColors.cardBorder
-                    )
+                WaveformScrubber(
+                    trackId = track.id,
+                    positionMs = playbackState.positionMs,
+                    durationMs = durationMs,
+                    abLoopStartMs = playbackState.abLoopStartMs,
+                    abLoopEndMs = playbackState.abLoopEndMs,
+                    isPlaying = playbackState.isPlaying,
+                    onSeekPreview = { scrubPreviewMs = it },
+                    onSeekCommit = { onSeekTo(it) }
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = formatDurationMs(displayPosMs),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (playbackState.sleepTimer.isActive) {
+                    if (playbackState.abLoopStartMs != null) {
+                        Surface(
+                            onClick = { showStudioSheet = true },
+                            shape = RoundedCornerShape(10.dp),
+                            color = photonColors.goldBadge.copy(alpha = 0.16f),
+                            border = BorderStroke(0.9.dp, photonColors.goldBadge.copy(alpha = 0.7f)),
+                            modifier = Modifier.testTag("now_playing_ab_loop_badge")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Loop,
+                                    contentDescription = null,
+                                    tint = photonColors.goldBadge,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = if (playbackState.abLoopActive) {
+                                        "A-B ${formatDurationMs(playbackState.abLoopStartMs)}–${formatDurationMs(playbackState.abLoopEndMs ?: 0L)}"
+                                    } else {
+                                        "Loop A: ${formatDurationMs(playbackState.abLoopStartMs)}"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = photonColors.goldBadge
+                                )
+                            }
+                        }
+                    } else if (playbackState.sleepTimer.isActive) {
                         Text(
                             text = "Sleep: ${playbackState.sleepTimer.label}",
                             style = MaterialTheme.typography.labelSmall,
@@ -758,23 +978,54 @@ fun NowPlayingScreen(
                     )
                 }
 
-                Surface(
-                    onClick = onTogglePlayPause,
-                    shape = CircleShape,
-                    color = photonColors.photonGlow,
-                    shadowElevation = 12.dp,
+                val playInteraction = remember { MutableInteractionSource() }
+                val playPressed by playInteraction.collectIsPressedAsState()
+                val playScale by animateFloatAsState(
+                    targetValue = if (playPressed) 0.91f else 1f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                    label = "now_playing_play_scale"
+                )
+                Box(
                     modifier = Modifier
-                        .size(72.dp)
-                        .testTag("now_playing_play_pause_btn")
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (playbackState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                            contentDescription = if (playbackState.isPlaying) "Pause" else "Play",
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(38.dp)
+                        .size(74.dp)
+                        .graphicsLayer {
+                            scaleX = playScale
+                            scaleY = playScale
+                        }
+                        .shadow(
+                            elevation = 16.dp,
+                            shape = CircleShape,
+                            ambientColor = photonColors.photonGlow,
+                            spotColor = photonColors.photonGlow
                         )
-                    }
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    lerp(photonColors.photonGlow, Color.White, 0.24f),
+                                    photonColors.photonGlow,
+                                    photonColors.nebulaAccent
+                                )
+                            )
+                        )
+                        .border(1.2.dp, Color.White.copy(alpha = 0.65f), CircleShape)
+                        .clickable(
+                            interactionSource = playInteraction,
+                            indication = null,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onTogglePlayPause()
+                            }
+                        )
+                        .testTag("now_playing_play_pause_btn"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (playbackState.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = if (playbackState.isPlaying) "Pause" else "Play",
+                        tint = Color(0xFF040818),
+                        modifier = Modifier.size(38.dp)
+                    )
                 }
 
                 IconButton(
@@ -810,7 +1061,12 @@ fun NowPlayingScreen(
                 }
             }
 
-            // Bottom Quick Utility Strip (Signal Inspector, Auto-Tag, Smart Q, Equalizer, Add to Playlist)
+            // Bottom Quick Utility Strip (Queue, Speed/A-B Studio, Signal Inspector, Equalizer, Playlist)
+            val studioModified = abs(settings.playbackSpeed - 1.0f) > 0.02f ||
+                abs(settings.playbackPitch - 1.0f) > 0.02f ||
+                playbackState.abLoopActive ||
+                playbackState.abLoopStartMs != null
+
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -826,28 +1082,25 @@ fun NowPlayingScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     QuickActionIcon(
+                        icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                        label = "Queue (${playbackState.queue.size})",
+                        tint = photonColors.photonGlow,
+                        tag = "now_playing_live_queue_btn",
+                        onClick = { showLiveQueueSheet = true }
+                    )
+                    QuickActionIcon(
+                        icon = Icons.Rounded.Speed,
+                        label = if (playbackState.abLoopActive) "A-B ON" else "Speed/A-B",
+                        tint = if (studioModified) photonColors.goldBadge else photonColors.nebulaAccent,
+                        tag = "now_playing_studio_btn",
+                        onClick = { showStudioSheet = true }
+                    )
+                    QuickActionIcon(
                         icon = Icons.Rounded.GraphicEq,
                         label = "Signal",
                         tint = photonColors.losslessBadge,
                         tag = "now_playing_signal_btn",
                         onClick = { showCodecInspector = true }
-                    )
-                    QuickActionIcon(
-                        icon = Icons.Rounded.AutoAwesome,
-                        label = "Auto-Tag",
-                        tint = photonColors.photonGlow,
-                        tag = "now_playing_autotag_btn",
-                        onClick = { onOpenMetadataAutoComplete(track) }
-                    )
-                    QuickActionIcon(
-                        icon = Icons.AutoMirrored.Rounded.QueueMusic,
-                        label = "Smart Q",
-                        tint = photonColors.goldBadge,
-                        tag = "now_playing_smart_queue_btn",
-                        onClick = {
-                            onCollapse()
-                            onOpenSmartQueue()
-                        }
                     )
                     QuickActionIcon(
                         icon = Icons.Rounded.Equalizer,
@@ -883,6 +1136,52 @@ fun NowPlayingScreen(
             },
             onDismiss = { showCodecInspector = false }
         )
+    }
+
+    if (showLiveQueueSheet) {
+        LiveQueueSheet(
+            playbackState = playbackState,
+            onJumpToIndex = onJumpToQueueIndex,
+            onReorderQueue = onReorderQueue,
+            onRemoveIndex = onRemoveQueueIndex,
+            onClearUpcoming = onClearUpcomingQueue,
+            onSaveQueueAsPlaylist = onSaveQueueAsPlaylist,
+            onDismiss = { showLiveQueueSheet = false }
+        )
+    }
+
+    if (showStudioSheet) {
+        ProPlaybackStudioSheet(
+            playbackState = playbackState,
+            playbackSpeed = settings.playbackSpeed,
+            playbackPitch = settings.playbackPitch,
+            onSpeedChange = onSetPlaybackSpeed,
+            onPitchChange = onSetPlaybackPitch,
+            onResetTempoAndPitch = onResetTempoAndPitch,
+            onSetLoopStart = onSetAbLoopStart,
+            onSetLoopEnd = onSetAbLoopEnd,
+            onClearLoop = onClearAbLoop,
+            allEqPresets = settings.allEqPresets(),
+            onUpdateTrackSoundProfile = onUpdateTrackSoundProfile,
+            onDismiss = { showStudioSheet = false }
+        )
+    }
+
+    AnimatedVisibility(
+        visible = showDrivingMode,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        DrivingModeOverlay(
+            playbackState = playbackState,
+            onTogglePlayPause = onTogglePlayPause,
+            onSkipNext = onSkipNext,
+            onSkipPrevious = onSkipPrevious,
+            onToggleFavorite = onToggleFavorite,
+            onToggleShuffle = onToggleShuffle,
+            onDismiss = { showDrivingMode = false }
+        )
+    }
     }
 }
 

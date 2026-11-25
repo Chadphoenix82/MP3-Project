@@ -12,6 +12,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DecoderReuseEvaluation
@@ -26,7 +27,11 @@ import com.example.MainActivity
 import com.example.data.db.TrackEntity
 import com.example.data.model.AudioSignalInfo
 import com.example.data.model.CodecQualityTier
+import com.example.data.model.CrossfadeCurveShape
+import com.example.data.model.PhotonEqPresets
 import com.example.data.model.SleepTimerState
+import com.example.data.model.StudioDspConfig
+import com.example.widget.PhotonWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,9 +43,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 enum class RepeatModeState {
     OFF, ALL, ONE
@@ -58,6 +60,11 @@ data class PlaybackUiState(
     val repeatMode: RepeatModeState = RepeatModeState.ALL,
     val crossfadeSeconds: Int = 4,
     val isCrossfading: Boolean = false,
+    val playbackSpeed: Float = 1.0f,
+    val playbackPitch: Float = 1.0f,
+    val abLoopStartMs: Long? = null,
+    val abLoopEndMs: Long? = null,
+    val abLoopActive: Boolean = false,
     val sleepTimer: SleepTimerState = SleepTimerState(),
     val eqTelemetry: EqTelemetry = EqTelemetry(),
     val signalInfo: AudioSignalInfo = AudioSignalInfo()
@@ -101,8 +108,12 @@ class PhotonPlaybackService : MediaSessionService() {
     private val audioEffects = PhotonAudioEffects()
     private var outputMonitor: AudioOutputMonitor? = null
     private var lastEqEnabled: Boolean = true
-    private var lastEqRatios: List<Float> = listOf(0.55f, 0.22f, -0.05f, 0.38f, 0.62f)
+    private var lastEqRatios: List<Float> = PhotonEqPresets.default10BandRatios
     private var lastBassStrength: Int = 380
+    private var lastVirtualizerStrength: Int = 320
+    private var lastStudioDsp: StudioDspConfig = StudioDspConfig()
+    private var crossfadeCurve: CrossfadeCurveShape = CrossfadeCurveShape.EQUAL_POWER
+    private var lastWidgetTickMs: Long = 0L
 
     private var positionTickerJob: Job? = null
     private var crossfadeJob: Job? = null
@@ -114,6 +125,9 @@ class PhotonPlaybackService : MediaSessionService() {
     private var repeatMode: RepeatModeState = RepeatModeState.ALL
     private var crossfadeSeconds: Int = 4
     private var playbackSpeed: Float = 1.0f
+    private var playbackPitch: Float = 1.0f
+    private var abLoopStartMs: Long? = null
+    private var abLoopEndMs: Long? = null
     private var skipSilenceEnabled: Boolean = false
     private var pauseOnAudioDisconnect: Boolean = true
     private var handleAudioFocus: Boolean = true
@@ -132,6 +146,7 @@ class PhotonPlaybackService : MediaSessionService() {
                     isBuffering = active.playbackState == Player.STATE_BUFFERING
                 )
             }
+            PhotonWidgetUpdater.requestUpdate(this@PhotonPlaybackService)
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -220,6 +235,7 @@ class PhotonPlaybackService : MediaSessionService() {
                 frequenciesHz = audioEffects.telemetry.bandFrequenciesHz,
                 bassStrength = lastBassStrength
             )
+            updateStudioDsp(effectiveStudioDsp())
         }
         spectrumProcessors.add(processor)
 
@@ -323,7 +339,7 @@ class PhotonPlaybackService : MediaSessionService() {
             .also { player ->
                 builtPlayerRef = player
                 player.addAnalyticsListener(analyticsListener)
-                player.setPlaybackSpeed(playbackSpeed)
+                player.playbackParameters = PlaybackParameters(playbackSpeed, playbackPitch)
                 player.skipSilenceEnabled = skipSilenceEnabled
             }
     }
@@ -365,7 +381,7 @@ class PhotonPlaybackService : MediaSessionService() {
         if (idx >= 0) {
             queue[idx] = updated
             if (idx == currentIndex) {
-                // Refresh current track metadata in UI
+                syncProcessorsWithEqualizer()
                 publishQueueState()
             } else {
                 PhotonPlaybackBridge.updateState { it.copy(queue = queue.toList()) }
@@ -433,6 +449,74 @@ class PhotonPlaybackService : MediaSessionService() {
         }
     }
 
+    fun removeFromQueue(index: Int) {
+        if (index !in queue.indices) return
+        if (queue.size <= 1) return
+        val removingCurrent = index == currentIndex
+        queue.removeAt(index)
+        when {
+            removingCurrent -> {
+                currentIndex = index.coerceAtMost(queue.lastIndex)
+                cancelCrossfade()
+                loadAndPlayOnActive(queue[currentIndex])
+            }
+            index < currentIndex -> {
+                currentIndex = (currentIndex - 1).coerceAtLeast(0)
+            }
+        }
+        publishQueueState()
+    }
+
+    fun clearUpcomingQueue() {
+        if (queue.isEmpty() || currentIndex !in queue.indices) return
+        if (currentIndex < queue.lastIndex) {
+            queue = queue.subList(0, currentIndex + 1).toMutableList()
+            publishQueueState()
+        }
+    }
+
+    fun setAbLoopStart() {
+        val pos = activePlayer?.currentPosition?.coerceAtLeast(0L) ?: return
+        abLoopStartMs = pos
+        if (abLoopEndMs != null && abLoopEndMs!! <= pos + 500L) {
+            abLoopEndMs = null
+        }
+        publishAbLoopState()
+    }
+
+    fun setAbLoopEnd() {
+        val active = activePlayer ?: return
+        val pos = active.currentPosition.coerceAtLeast(0L)
+        val start = abLoopStartMs ?: 0L
+        if (pos <= start + 500L) {
+            val dur = active.duration.takeIf { it > 0L } ?: queue.getOrNull(currentIndex)?.durationMs ?: 0L
+            abLoopEndMs = (start + 2000L).coerceAtMost(dur.coerceAtLeast(start + 1000L))
+        } else {
+            abLoopEndMs = pos
+        }
+        abLoopStartMs = start
+        publishAbLoopState()
+    }
+
+    fun clearAbLoop() {
+        abLoopStartMs = null
+        abLoopEndMs = null
+        publishAbLoopState()
+    }
+
+    private fun publishAbLoopState() {
+        val start = abLoopStartMs
+        val end = abLoopEndMs
+        val active = start != null && end != null && end > start + 400L
+        PhotonPlaybackBridge.updateState {
+            it.copy(
+                abLoopStartMs = start,
+                abLoopEndMs = end,
+                abLoopActive = active
+            )
+        }
+    }
+
     fun togglePlayPause() {
         val active = activePlayer ?: return
         if (queue.isEmpty()) return
@@ -479,6 +563,7 @@ class PhotonPlaybackService : MediaSessionService() {
     fun toggleShuffle() {
         shuffleEnabled = !shuffleEnabled
         PhotonPlaybackBridge.updateState { it.copy(shuffleEnabled = shuffleEnabled) }
+        PhotonWidgetUpdater.requestUpdate(this)
     }
 
     fun cycleRepeatMode() {
@@ -495,14 +580,20 @@ class PhotonPlaybackService : MediaSessionService() {
         PhotonPlaybackBridge.updateState { it.copy(crossfadeSeconds = crossfadeSeconds) }
     }
 
+    fun setCrossfadeCurve(curve: CrossfadeCurveShape) {
+        crossfadeCurve = curve
+    }
+
     @OptIn(UnstableApi::class)
     fun updatePlaybackOptions(
         speed: Float,
+        pitch: Float = playbackPitch,
         skipSilence: Boolean,
         pauseOnDisconnect: Boolean,
         audioFocus: Boolean
     ) {
         playbackSpeed = speed.coerceIn(0.5f, 2.0f)
+        playbackPitch = pitch.coerceIn(0.5f, 1.5f)
         skipSilenceEnabled = skipSilence
         pauseOnAudioDisconnect = pauseOnDisconnect
         handleAudioFocus = audioFocus
@@ -512,25 +603,44 @@ class PhotonPlaybackService : MediaSessionService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
+        val params = PlaybackParameters(playbackSpeed, playbackPitch)
         listOfNotNull(activePlayer, standbyPlayer).forEach { player ->
-            player.setPlaybackSpeed(playbackSpeed)
+            player.playbackParameters = params
             player.skipSilenceEnabled = skipSilenceEnabled
             player.setHandleAudioBecomingNoisy(pauseOnAudioDisconnect)
             player.setAudioAttributes(audioAttributes, handleAudioFocus)
+        }
+        PhotonPlaybackBridge.updateState {
+            it.copy(playbackSpeed = playbackSpeed, playbackPitch = playbackPitch)
         }
     }
 
     fun updateEqualizer(enabled: Boolean, ratios: List<Float>, bass: Int, virtualizer: Int) {
         lastEqEnabled = enabled
-        if (ratios.size == 5) lastEqRatios = ratios
+        lastEqRatios = PhotonEqPresets.normalizeTo10Bands(ratios)
         lastBassStrength = bass.coerceIn(0, 1000)
-        audioEffects.updateSettings(enabled, ratios, bass, virtualizer)
+        lastVirtualizerStrength = virtualizer.coerceIn(0, 1000)
+        audioEffects.updateSettings(enabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effectiveStudioDsp())
         syncProcessorsWithEqualizer()
         PhotonPlaybackBridge.updateState { it.copy(eqTelemetry = audioEffects.telemetry) }
     }
 
+    fun updateStudioDsp(config: StudioDspConfig) {
+        lastStudioDsp = config
+        val effective = effectiveStudioDsp()
+        audioEffects.updateSettings(lastEqEnabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effective)
+        syncProcessorsWithEqualizer()
+        PhotonPlaybackBridge.updateState { it.copy(eqTelemetry = audioEffects.telemetry) }
+    }
+
+    private fun effectiveStudioDsp(): StudioDspConfig {
+        val currentTrackGain = queue.getOrNull(currentIndex)?.customGainDb ?: 0f
+        return lastStudioDsp.copy(trackGainOffsetDb = currentTrackGain)
+    }
+
     private fun syncProcessorsWithEqualizer() {
         val freqs = audioEffects.telemetry.bandFrequenciesHz
+        val effectiveDsp = effectiveStudioDsp()
         spectrumProcessors.forEach { processor ->
             processor.updateEqualizerProfile(
                 enabled = lastEqEnabled,
@@ -538,6 +648,7 @@ class PhotonPlaybackService : MediaSessionService() {
                 frequenciesHz = freqs,
                 bassStrength = lastBassStrength
             )
+            processor.updateStudioDsp(effectiveDsp)
         }
     }
 
@@ -617,14 +728,17 @@ class PhotonPlaybackService : MediaSessionService() {
 
     private fun loadAndPlayOnActive(track: TrackEntity) {
         val active = activePlayer ?: return
+        clearAbLoop()
         playerSignalSnapshots.remove(active)
         seedSignalInfoFromTrack(track)
         active.stop()
         active.clearMediaItems()
         active.volume = 1f
+        active.playbackParameters = PlaybackParameters(playbackSpeed, playbackPitch)
         active.setMediaItem(track.toMediaItem())
         active.prepare()
         active.play()
+        syncProcessorsWithEqualizer()
         attachEffectsToActivePlayer()
     }
 
@@ -675,10 +789,12 @@ class PhotonPlaybackService : MediaSessionService() {
         PhotonPlaybackBridge.updateState { it.copy(isCrossfading = true) }
 
         val nextTrack = queue[targetIndex]
+        clearAbLoop()
         playerSignalSnapshots.remove(incoming)
         incoming.stop()
         incoming.clearMediaItems()
         incoming.volume = 0f
+        incoming.playbackParameters = PlaybackParameters(playbackSpeed, playbackPitch)
         incoming.setMediaItem(nextTrack.toMediaItem())
         incoming.prepare()
         incoming.play()
@@ -691,9 +807,7 @@ class PhotonPlaybackService : MediaSessionService() {
 
             for (step in 1..steps) {
                 val progress = step.toFloat() / steps.toFloat()
-                // Equal-power cosine/sine curve prevents volume dip in the middle of transition
-                val outGain = cos(progress * PI / 2.0).toFloat().coerceIn(0f, 1f)
-                val inGain = sin(progress * PI / 2.0).toFloat().coerceIn(0f, 1f)
+                val (outGain, inGain) = crossfadeCurve.computeGains(progress)
                 outgoing.volume = outGain
                 incoming.volume = inGain
                 delay(stepDelay)
@@ -767,11 +881,21 @@ class PhotonPlaybackService : MediaSessionService() {
                         )
                     }
 
+                    // Precision A-B Loop enforcement
+                    val loopStart = abLoopStartMs
+                    val loopEnd = abLoopEndMs
+                    val isLoopingSegment = loopStart != null && loopEnd != null && loopEnd > loopStart + 400L
+                    if (isLoopingSegment && active.isPlaying && pos >= loopEnd!!) {
+                        active.seekTo(loopStart!!)
+                        PhotonPlaybackBridge.updateState { it.copy(positionMs = loopStart) }
+                    }
+
                     // Trigger automatic dual-player crossfade when approaching track end
                     val crossfadeMs = crossfadeSeconds * 1000L
                     if (
                         active.isPlaying &&
                         !isCrossfading &&
+                        !isLoopingSegment &&
                         !sleepEndOfTrack &&
                         crossfadeMs > 0L &&
                         dur > crossfadeMs + 1500L &&
@@ -784,6 +908,12 @@ class PhotonPlaybackService : MediaSessionService() {
                     }
                     if (!active.isPlaying) {
                         decaySpectrumWhenIdle()
+                    } else {
+                        val nowMs = System.currentTimeMillis()
+                        if (nowMs - lastWidgetTickMs >= 2000L) {
+                            lastWidgetTickMs = nowMs
+                            PhotonWidgetUpdater.requestUpdate(this@PhotonPlaybackService)
+                        }
                     }
                 } else {
                     decaySpectrumWhenIdle()
@@ -863,6 +993,7 @@ class PhotonPlaybackService : MediaSessionService() {
                 positionMs = active?.currentPosition?.coerceAtLeast(0L) ?: 0L
             )
         }
+        PhotonWidgetUpdater.requestUpdate(this)
     }
 
     private fun TrackEntity.toMediaItem(): MediaItem {

@@ -4,7 +4,9 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.data.db.ArtistPlayStat
 import com.example.data.db.ExcludedFolderEntity
+import com.example.data.db.GenrePlayStat
 import com.example.data.db.PlaylistWithSummary
 import com.example.data.db.TrackEntity
 import com.example.data.db.WatchedFolderEntity
@@ -12,10 +14,15 @@ import com.example.data.library.FolderMonitorStatus
 import com.example.data.library.LibraryRepository
 import com.example.data.library.SmartQueueEngine
 import com.example.data.library.SmartQueueSuggestion
+import com.example.data.model.CrossfadeCurveShape
 import com.example.data.model.EqualizerPreset
 import com.example.data.model.MetadataSuggestion
+import com.example.data.model.OutputRouteCategory
+import com.example.data.model.PhotonEqPresets
+import com.example.data.model.ReverbSpacePreset
 import com.example.data.model.SortDirection
 import com.example.data.model.SortOption
+import com.example.data.model.WidgetThemeMode
 import com.example.data.network.AppUpdateInfo
 import com.example.data.network.GitHubUpdateChecker
 import com.example.data.network.MetadataAutoCompleteRepository
@@ -24,6 +31,10 @@ import com.example.data.prefs.AppSettings
 import com.example.data.prefs.SettingsRepository
 import com.example.player.PhotonPlayerController
 import com.example.player.PlaybackUiState
+import com.example.ui.theme.AppFontChoice
+import com.example.ui.theme.AppWallpaperPreset
+import com.example.ui.theme.CosmicThemeSkin
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -96,6 +107,60 @@ class PhotonViewModel(
     val formatFilter: StateFlow<String?> = _formatFilter.asStateFlow()
 
     val allTracks: StateFlow<List<TrackEntity>> = libraryRepository.allTracks.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val favoriteTracks: StateFlow<List<TrackEntity>> = allTracks
+        .map { list -> list.filter { it.isFavorite } }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val recentlyPlayedTracks: StateFlow<List<TrackEntity>> = combine(
+        allTracks,
+        libraryRepository.recentHistory
+    ) { tracks, history ->
+        val byId = tracks.associateBy { it.id }
+        val seen = LinkedHashSet<Long>()
+        val result = mutableListOf<TrackEntity>()
+        for (event in history) {
+            if (seen.add(event.trackId)) {
+                byId[event.trackId]?.let { result.add(it) }
+            }
+            if (result.size >= 20) break
+        }
+        result
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val mostPlayedTracks: StateFlow<List<Pair<TrackEntity, Int>>> = combine(
+        allTracks,
+        libraryRepository.trackPlayStats
+    ) { tracks, stats ->
+        val byId = tracks.associateBy { it.id }
+        stats.sortedByDescending { it.playCount }
+            .mapNotNull { stat -> byId[stat.trackId]?.let { it to stat.playCount } }
+            .take(20)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val genrePlayStats: StateFlow<List<GenrePlayStat>> = libraryRepository.genrePlayStats.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val artistPlayStats: StateFlow<List<ArtistPlayStat>> = libraryRepository.artistPlayStats.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -186,19 +251,27 @@ class PhotonViewModel(
     private val _updateCheckStatus = MutableStateFlow<String?>(null)
     val updateCheckStatus: StateFlow<String?> = _updateCheckStatus.asStateFlow()
 
+    // Password-protected API access state (locks automatically whenever app restarts)
+    private val _isApiUnlocked = MutableStateFlow(false)
+    val isApiUnlocked: StateFlow<Boolean> = _isApiUnlocked.asStateFlow()
+
     private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
 
     private var lastLoggedTrackKey: String? = null
     private var lastAutoAppendedForTrackId: Long? = null
+    private var lastAppliedOutputCategory: OutputRouteCategory? = null
+    private var lastAppliedTrackProfileId: Long? = null
 
     init {
-        // Keep PlaybackService synced with DataStore playback, crossfade & equalizer settings
+        // Keep PlaybackService synced with DataStore playback, crossfade, 10-band EQ, Studio DSP & Widgets
         viewModelScope.launch {
             settings.collect { appSettings ->
                 playerController.setCrossfadeSeconds(appSettings.crossfadeSeconds)
+                playerController.setCrossfadeCurve(appSettings.crossfadeCurve)
                 playerController.updatePlaybackOptions(
                     speed = appSettings.playbackSpeed,
+                    pitch = appSettings.playbackPitch,
                     skipSilence = appSettings.skipSilenceEnabled,
                     pauseOnDisconnect = appSettings.pauseOnAudioDisconnect,
                     audioFocus = appSettings.handleAudioFocus
@@ -209,6 +282,9 @@ class PhotonViewModel(
                     bass = appSettings.bassBoostStrength,
                     virtualizer = appSettings.virtualizerStrength
                 )
+                val activeTrackGain = playbackState.value.currentTrack?.customGainDb ?: 0f
+                playerController.updateStudioDsp(appSettings.toStudioDspConfig(activeTrackGain))
+                playerController.refreshWidgets()
             }
         }
 
@@ -230,10 +306,53 @@ class PhotonViewModel(
             }
         }
 
-        // Record listening history in Room whenever a track starts playing + auto-queue next track
+        // Record listening history + auto-queue + Per-Track Sound Memory + Auto EQ by Output Route
         viewModelScope.launch {
             playbackState.collect { pb ->
                 val current = pb.currentTrack
+                val currentSettings = settings.value
+
+                // 1) Auto EQ switch when output route changes (Bluetooth / Wired-USB / Speaker)
+                val routeCategory = OutputRouteCategory.fromTransport(pb.signalInfo.outputTransport)
+                if (currentSettings.autoEqByOutputEnabled && routeCategory != lastAppliedOutputCategory) {
+                    lastAppliedOutputCategory = routeCategory
+                    val hasTrackEqOverride = !current?.preferredEqPreset.isNullOrBlank()
+                    if (!hasTrackEqOverride) {
+                        val targetPresetName = currentSettings.eqPresetForOutput(routeCategory)
+                        val preset = currentSettings.allEqPresets()
+                            .firstOrNull { it.name.equals(targetPresetName, ignoreCase = true) }
+                        if (preset != null && !currentSettings.eqPresetName.equals(preset.name, ignoreCase = true)) {
+                            settingsRepository.setEqBands(preset.name, preset.bandRatios)
+                            settingsRepository.setSpatialEffects(preset.bassBoost, preset.virtualizer)
+                        }
+                    }
+                } else if (!currentSettings.autoEqByOutputEnabled) {
+                    lastAppliedOutputCategory = null
+                }
+
+                // 2) Per-Track Sound Profile recall when track changes
+                if (current != null && current.id != lastAppliedTrackProfileId) {
+                    lastAppliedTrackProfileId = current.id
+                    playerController.updateStudioDsp(currentSettings.toStudioDspConfig(current.customGainDb))
+                    val trackEqName = current.preferredEqPreset
+                    if (!trackEqName.isNullOrBlank()) {
+                        val matched = currentSettings.allEqPresets()
+                            .firstOrNull { it.name.equals(trackEqName, ignoreCase = true) }
+                        if (matched != null && !currentSettings.eqPresetName.equals(matched.name, ignoreCase = true)) {
+                            settingsRepository.setEqBands(matched.name, matched.bandRatios)
+                            settingsRepository.setSpatialEffects(matched.bassBoost, matched.virtualizer)
+                        }
+                    } else if (currentSettings.autoEqByOutputEnabled) {
+                        val routePresetName = currentSettings.eqPresetForOutput(routeCategory)
+                        val routePreset = currentSettings.allEqPresets()
+                            .firstOrNull { it.name.equals(routePresetName, ignoreCase = true) }
+                        if (routePreset != null && !currentSettings.eqPresetName.equals(routePreset.name, ignoreCase = true)) {
+                            settingsRepository.setEqBands(routePreset.name, routePreset.bandRatios)
+                            settingsRepository.setSpatialEffects(routePreset.bassBoost, routePreset.virtualizer)
+                        }
+                    }
+                }
+
                 if (current != null && pb.isPlaying) {
                     val key = "${current.id}:${pb.currentIndex}"
                     if (key != lastLoggedTrackKey) {
@@ -243,7 +362,7 @@ class PhotonViewModel(
 
                     // Auto-append top Smart Queue suggestion when reaching the end of the current queue
                     if (
-                        settings.value.smartQueueAutoPlay &&
+                        currentSettings.smartQueueAutoPlay &&
                         pb.queue.isNotEmpty() &&
                         pb.currentIndex == pb.queue.lastIndex &&
                         lastAutoAppendedForTrackId != current.id
@@ -283,6 +402,57 @@ class PhotonViewModel(
         playerController.jumpToQueueIndex(index)
     }
 
+    fun reorderActiveQueue(orderedTracks: List<TrackEntity>) {
+        playerController.reorderQueue(orderedTracks)
+    }
+
+    fun removeTrackFromActiveQueue(index: Int) {
+        playerController.removeFromQueue(index)
+    }
+
+    fun clearUpcomingQueue() {
+        playerController.clearUpcomingQueue()
+        _snackbarMessages.tryEmit("Cleared upcoming tracks from queue")
+    }
+
+    fun saveActiveQueueAsPlaylist(name: String, description: String) {
+        val currentQueue = playbackState.value.queue
+        if (name.isBlank() || currentQueue.isEmpty()) return
+        viewModelScope.launch {
+            libraryRepository.createPlaylistFromTracks(
+                name = name,
+                description = description,
+                trackIds = currentQueue.map { it.id }
+            )
+            _snackbarMessages.tryEmit("Saved ${currentQueue.size} queued tracks as \"$name\"")
+        }
+    }
+
+    fun toggleFavorite(track: TrackEntity) {
+        val next = !track.isFavorite
+        viewModelScope.launch {
+            libraryRepository.setTrackFavorite(track.id, next)
+            playerController.updateTrackInQueue(track.copy(isFavorite = next))
+            playerController.refreshWidgets()
+            _snackbarMessages.tryEmit(
+                if (next) "Added \"${track.title}\" to Favorites"
+                else "Removed \"${track.title}\" from Favorites"
+            )
+        }
+    }
+
+    fun setAbLoopStart() {
+        playerController.setAbLoopStart()
+    }
+
+    fun setAbLoopEnd() {
+        playerController.setAbLoopEnd()
+    }
+
+    fun clearAbLoop() {
+        playerController.clearAbLoop()
+    }
+
     fun setSmartQueueAutoPlay(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.setSmartQueueAutoPlay(enabled)
@@ -301,6 +471,27 @@ class PhotonViewModel(
 
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
+    }
+
+    fun commitSearchQuery(query: String = _searchQuery.value) {
+        val cleaned = query.trim()
+        if (cleaned.isEmpty()) return
+        viewModelScope.launch {
+            settingsRepository.addSearchHistoryQuery(cleaned)
+        }
+    }
+
+    fun removeSearchHistoryItem(query: String) {
+        viewModelScope.launch {
+            settingsRepository.removeSearchHistoryQuery(query)
+        }
+    }
+
+    fun clearSearchHistory() {
+        viewModelScope.launch {
+            settingsRepository.clearSearchHistory()
+            _snackbarMessages.tryEmit("Cleared search history")
+        }
     }
 
     fun setFormatFilter(format: String?) {
@@ -493,10 +684,10 @@ class PhotonViewModel(
         }
     }
 
-    fun createPlaylistAndAddTrack(name: String, track: TrackEntity) {
+    fun createPlaylistAndAddTrack(name: String, description: String = "", track: TrackEntity) {
         if (name.isBlank()) return
         viewModelScope.launch {
-            val playlistId = libraryRepository.createPlaylist(name, "")
+            val playlistId = libraryRepository.createPlaylist(name, description)
             libraryRepository.addTrackToPlaylist(playlistId, track.id)
             _snackbarMessages.tryEmit("Created \"$name\" and added \"${track.title}\"")
         }
@@ -563,6 +754,10 @@ class PhotonViewModel(
     }
 
     fun searchMetadataForEditor(query: String = _editorSearchState.value.query, targetTrack: TrackEntity? = null) {
+        if (!_isApiUnlocked.value) {
+            _snackbarMessages.tryEmit("API access is password-protected — unlock API first")
+            return
+        }
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
         val resolvedTrack = targetTrack ?: allTracks.value.firstOrNull { it.id == _editorSelectedTrackId.value }
@@ -662,6 +857,10 @@ class PhotonViewModel(
     }
 
     fun performMetadataSearch(query: String = _metadataUiState.value.query) {
+        if (!_isApiUnlocked.value) {
+            _snackbarMessages.tryEmit("API access is password-protected — unlock API first")
+            return
+        }
         val trimmed = query.trim()
         if (trimmed.isBlank()) return
         val target = _metadataUiState.value.targetTrack
@@ -727,9 +926,79 @@ class PhotonViewModel(
         }
     }
 
+    // ---- Password-Protected API Vault ----
+
+    fun createApiPassword(password: String, confirmPassword: String, onResult: (String?) -> Unit) {
+        when {
+            password.length < 4 -> onResult("Password must be at least 4 characters.")
+            password != confirmPassword -> onResult("Passwords do not match.")
+            else -> {
+                viewModelScope.launch {
+                    settingsRepository.setApiPassword(password)
+                    _isApiUnlocked.value = true
+                    _snackbarMessages.tryEmit("API password set — API controls unlocked for this session")
+                    onResult(null)
+                }
+            }
+        }
+    }
+
+    fun unlockApiWithPassword(password: String, onResult: (String?) -> Unit) {
+        if (password.isBlank()) {
+            onResult("Enter your API password.")
+            return
+        }
+        viewModelScope.launch {
+            val valid = settingsRepository.verifyApiPassword(password)
+            if (valid) {
+                _isApiUnlocked.value = true
+                _snackbarMessages.tryEmit("API access unlocked")
+                onResult(null)
+            } else {
+                onResult("Incorrect password.")
+            }
+        }
+    }
+
+    fun changeApiPassword(
+        currentPassword: String,
+        newPassword: String,
+        confirmPassword: String,
+        onResult: (String?) -> Unit
+    ) {
+        when {
+            currentPassword.isBlank() -> onResult("Enter your current password.")
+            newPassword.length < 4 -> onResult("New password must be at least 4 characters.")
+            newPassword != confirmPassword -> onResult("New passwords do not match.")
+            else -> {
+                viewModelScope.launch {
+                    val valid = settingsRepository.verifyApiPassword(currentPassword)
+                    if (!valid) {
+                        onResult("Current password is incorrect.")
+                    } else {
+                        settingsRepository.setApiPassword(newPassword)
+                        _snackbarMessages.tryEmit("API password updated on device")
+                        onResult(null)
+                    }
+                }
+            }
+        }
+    }
+
+    fun lockApiAccess() {
+        _isApiUnlocked.value = false
+        _editorSearchState.value = _editorSearchState.value.copy(results = emptyList(), errorMessage = null)
+        _updateCheckStatus.value = null
+        _snackbarMessages.tryEmit("API access locked and hidden")
+    }
+
     // ---- Privacy-First GitHub Update Checker ----
 
     fun checkForGitHubUpdates(manual: Boolean = false) {
+        if (manual && !_isApiUnlocked.value) {
+            _snackbarMessages.tryEmit("Unlock API access with your password first")
+            return
+        }
         if (_isCheckingUpdate.value) return
         viewModelScope.launch {
             _isCheckingUpdate.value = true
@@ -772,6 +1041,10 @@ class PhotonViewModel(
     }
 
     fun setGithubUpdateRepo(repo: String) {
+        if (!_isApiUnlocked.value) {
+            _snackbarMessages.tryEmit("Unlock API access with your password first")
+            return
+        }
         viewModelScope.launch {
             val cleaned = repo.trim().removePrefix("https://github.com/").trim('/')
             if (!cleaned.contains("/")) {
@@ -787,6 +1060,7 @@ class PhotonViewModel(
     }
 
     fun setCheckUpdatesOnLaunch(enabled: Boolean) {
+        if (!_isApiUnlocked.value) return
         viewModelScope.launch { settingsRepository.setCheckUpdatesOnLaunch(enabled) }
     }
 
@@ -796,12 +1070,71 @@ class PhotonViewModel(
         viewModelScope.launch { settingsRepository.setDarkMode(enabled) }
     }
 
+    fun setCosmicThemeSkin(skin: CosmicThemeSkin) {
+        viewModelScope.launch { settingsRepository.setCosmicThemeSkin(skin) }
+    }
+
+    fun setCustomThemeColors(primaryArgb: Long, secondaryArgb: Long, oledBlack: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setCustomThemeColors(primaryArgb, secondaryArgb, oledBlack)
+        }
+    }
+
+    fun setAppFont(font: AppFontChoice) {
+        viewModelScope.launch {
+            settingsRepository.setAppFont(font)
+            _snackbarMessages.tryEmit("Font updated to ${font.displayName}")
+        }
+    }
+
+    fun setWallpaperPreset(preset: AppWallpaperPreset) {
+        viewModelScope.launch {
+            settingsRepository.setWallpaperPreset(preset)
+        }
+    }
+
+    fun setWallpaperDimAlpha(alpha: Float) {
+        viewModelScope.launch {
+            settingsRepository.setWallpaperDimAlpha(alpha)
+        }
+    }
+
+    fun saveCustomWallpaperPhoto(uri: Uri) {
+        viewModelScope.launch {
+            val saved = settingsRepository.saveCustomWallpaperFromUri(uri)
+            if (saved != null) {
+                _snackbarMessages.tryEmit("Applied custom wallpaper")
+            } else {
+                _snackbarMessages.tryEmit("Could not load selected wallpaper photo")
+            }
+        }
+    }
+
+    fun setDynamicAlbumColorsEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setDynamicAlbumColorsEnabled(enabled) }
+    }
+
     fun setCrossfadeSeconds(seconds: Int) {
         viewModelScope.launch { settingsRepository.setCrossfadeSeconds(seconds) }
     }
 
+    fun setCrossfadeCurve(curve: CrossfadeCurveShape) {
+        viewModelScope.launch { settingsRepository.setCrossfadeCurve(curve) }
+    }
+
     fun setPlaybackSpeed(speed: Float) {
         viewModelScope.launch { settingsRepository.setPlaybackSpeed(speed) }
+    }
+
+    fun setPlaybackPitch(pitch: Float) {
+        viewModelScope.launch { settingsRepository.setPlaybackPitch(pitch) }
+    }
+
+    fun resetTempoAndPitch() {
+        viewModelScope.launch {
+            settingsRepository.setPlaybackSpeed(1.0f)
+            settingsRepository.setPlaybackPitch(1.0f)
+        }
     }
 
     fun setSkipSilenceEnabled(enabled: Boolean) {
@@ -840,7 +1173,7 @@ class PhotonViewModel(
     }
 
     fun updateEqBand(bandIndex: Int, normalizedRatio: Float) {
-        val current = settings.value.eqBandRatios.toMutableList()
+        val current = PhotonEqPresets.normalizeTo10Bands(settings.value.eqBandRatios).toMutableList()
         if (bandIndex !in current.indices) return
         current[bandIndex] = normalizedRatio.coerceIn(-1f, 1f)
         viewModelScope.launch {
@@ -848,10 +1181,135 @@ class PhotonViewModel(
         }
     }
 
+    fun saveCustomEqPreset(name: String, description: String = "") {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        val current = settings.value
+        val preset = EqualizerPreset(
+            name = trimmed,
+            description = description.ifBlank { "Custom 10-band studio curve" },
+            bandRatios = PhotonEqPresets.normalizeTo10Bands(current.eqBandRatios),
+            bassBoost = current.bassBoostStrength,
+            virtualizer = current.virtualizerStrength,
+            isCustom = true
+        )
+        viewModelScope.launch {
+            settingsRepository.saveCustomEqPreset(preset)
+            _snackbarMessages.tryEmit("Saved custom EQ preset \"$trimmed\"")
+        }
+    }
+
+    fun deleteCustomEqPreset(name: String) {
+        viewModelScope.launch {
+            settingsRepository.deleteCustomEqPreset(name)
+            _snackbarMessages.tryEmit("Deleted custom preset \"$name\"")
+        }
+    }
+
     fun updateSpatialEffects(bassBoost: Int, virtualizer: Int) {
         viewModelScope.launch {
             settingsRepository.setSpatialEffects(bassBoost, virtualizer)
         }
+    }
+
+    fun setPreAmpDb(db: Float) {
+        viewModelScope.launch { settingsRepository.setPreAmpDb(db) }
+    }
+
+    fun setSoftLimiterEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setSoftLimiterEnabled(enabled) }
+    }
+
+    fun setLoudnessNormalizerEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setLoudnessNormalizerEnabled(enabled) }
+    }
+
+    fun setStereoBalance(balance: Float) {
+        viewModelScope.launch { settingsRepository.setStereoBalance(balance) }
+    }
+
+    fun setMonoAudioEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setMonoAudioEnabled(enabled) }
+    }
+
+    fun setCrossfeedStrength(strength: Float) {
+        viewModelScope.launch { settingsRepository.setCrossfeedStrength(strength) }
+    }
+
+    fun setReverbPreset(preset: ReverbSpacePreset) {
+        viewModelScope.launch { settingsRepository.setReverbPreset(preset) }
+    }
+
+    fun setAutoEqByOutputEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setAutoEqByOutputEnabled(enabled)
+            if (enabled) {
+                val category = OutputRouteCategory.fromTransport(playbackState.value.signalInfo.outputTransport)
+                lastAppliedOutputCategory = category
+                val presetName = settings.value.eqPresetForOutput(category)
+                val matched = settings.value.allEqPresets()
+                    .firstOrNull { it.name.equals(presetName, ignoreCase = true) }
+                if (matched != null) {
+                    settingsRepository.setEqBands(matched.name, matched.bandRatios)
+                    settingsRepository.setSpatialEffects(matched.bassBoost, matched.virtualizer)
+                }
+                _snackbarMessages.tryEmit("Auto-EQ active for ${category.label}: $presetName")
+            }
+        }
+    }
+
+    fun setOutputRouteEqPreset(category: OutputRouteCategory, presetName: String) {
+        viewModelScope.launch {
+            settingsRepository.setOutputRouteEqPreset(category, presetName)
+            val currentCategory = OutputRouteCategory.fromTransport(playbackState.value.signalInfo.outputTransport)
+            if (settings.value.autoEqByOutputEnabled && currentCategory == category) {
+                val matched = settings.value.allEqPresets()
+                    .firstOrNull { it.name.equals(presetName, ignoreCase = true) }
+                if (matched != null) {
+                    settingsRepository.setEqBands(matched.name, matched.bandRatios)
+                    settingsRepository.setSpatialEffects(matched.bassBoost, matched.virtualizer)
+                }
+            }
+        }
+    }
+
+    fun updateTrackSoundProfile(track: TrackEntity, customGainDb: Float, preferredEqPreset: String?) {
+        val clampedGain = customGainDb.coerceIn(-6f, 6f)
+        val cleanedEq = preferredEqPreset?.takeIf { it.isNotBlank() }
+        viewModelScope.launch {
+            libraryRepository.updateTrackSoundProfile(track.id, clampedGain, cleanedEq)
+            val updated = track.copy(customGainDb = clampedGain, preferredEqPreset = cleanedEq)
+            playerController.updateTrackInQueue(updated)
+            if (playbackState.value.currentTrack?.id == track.id) {
+                playerController.updateStudioDsp(settings.value.toStudioDspConfig(clampedGain))
+                if (cleanedEq != null) {
+                    settings.value.allEqPresets()
+                        .firstOrNull { it.name.equals(cleanedEq, ignoreCase = true) }
+                        ?.let { matched ->
+                            settingsRepository.setEqBands(matched.name, matched.bandRatios)
+                            settingsRepository.setSpatialEffects(matched.bassBoost, matched.virtualizer)
+                        }
+                }
+            }
+        }
+    }
+
+    fun setWidgetThemeMode(mode: WidgetThemeMode) {
+        viewModelScope.launch {
+            settingsRepository.setWidgetThemeMode(mode)
+            playerController.refreshWidgets()
+        }
+    }
+
+    fun setWidgetGlassOpacity(opacity: Float) {
+        viewModelScope.launch {
+            settingsRepository.setWidgetGlassOpacity(opacity)
+            playerController.refreshWidgets()
+        }
+    }
+
+    fun refreshHomeWidgets() {
+        playerController.refreshWidgets()
     }
 
     fun resetSettingsToDefaults() {

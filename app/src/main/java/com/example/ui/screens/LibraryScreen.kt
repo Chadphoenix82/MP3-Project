@@ -1,12 +1,14 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,6 +19,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -26,11 +32,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.AudioFile
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CreateNewFolder
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
@@ -39,6 +54,8 @@ import androidx.compose.material.icons.rounded.Swipe
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -51,7 +68,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,38 +85,53 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.db.PlaylistWithSummary
 import com.example.data.db.TrackEntity
 import com.example.data.library.FolderMonitorStatus
+import com.example.data.model.AudioSignalInfo
 import com.example.data.model.SortDirection
 import com.example.data.model.SortOption
-import com.example.ui.components.ReorderableTrackLazyColumn
+import com.example.ui.components.AudioFormatBadge
+import com.example.ui.components.PhotonAlbumArt
+import com.example.ui.components.PhotonDeckHero
+import com.example.ui.components.PhotonEqualizerBars
+import com.example.ui.components.SearchBarWithHistory
+import com.example.ui.components.formatDurationMs
 import com.example.ui.theme.LocalPhotonColors
+import kotlinx.coroutines.launch
 
-private enum class LibraryFormatPage(
+private enum class LibraryHubPage(
     val title: String,
-    val subtitle: String,
-    val formatKey: String?
+    val swipeHint: String
 ) {
-    ALL("All Tracks", "Complete MP3, FLAC, WAV, Opus, AAC & Ogg Library", null),
-    MP3("MP3", "Dedicated MP3 Audio Collection", "MP3"),
-    FLAC("FLAC", "Dedicated Lossless FLAC Collection", "FLAC"),
-    WAV("WAV", "Dedicated Uncompressed Studio WAV Collection", "WAV"),
-    OPUS("Opus", "Dedicated Modern Opus Audio Collection", "OPUS"),
-    AAC("M4A / AAC", "Dedicated M4A & AAC Audio Collection", "AAC"),
-    OGG("Ogg Vorbis", "Dedicated Ogg Vorbis Audio Collection", "OGG")
+    MUSIC_LIBRARY("Music Library", "Swipe → Genres · Playlists"),
+    GENRES("Genres", "Genre Folders · Page 2/3"),
+    PLAYLISTS("Playlists", "Playlists · Page 3/3")
 }
 
 @Composable
 fun LibraryScreen(
     tracks: List<TrackEntity>,
+    allLibraryTracks: List<TrackEntity>,
+    favoriteTracks: List<TrackEntity>,
+    recentlyPlayedTracks: List<TrackEntity>,
+    playlists: List<PlaylistWithSummary>,
+    selectedPlaylistId: Long?,
+    selectedPlaylistTracks: List<TrackEntity>,
     totalLibraryCount: Int,
     currentTrackId: Long?,
+    currentTrack: TrackEntity? = null,
+    signalInfo: AudioSignalInfo = AudioSignalInfo(),
     isPlaying: Boolean,
     searchQuery: String,
+    searchHistory: List<String>,
     sortOption: SortOption,
     sortDirection: SortDirection,
     monitorStatus: FolderMonitorStatus,
     onSearchQueryChange: (String) -> Unit,
+    onCommitSearchQuery: (String) -> Unit,
+    onRemoveSearchHistoryItem: (String) -> Unit,
+    onClearSearchHistory: () -> Unit,
     onSortOptionSelect: (SortOption) -> Unit,
     onToggleSortDirection: () -> Unit,
     onImportFilesClick: () -> Unit,
@@ -104,62 +140,62 @@ fun LibraryScreen(
     onGenerateStudioWav: () -> Unit,
     onPlayTrack: (List<TrackEntity>, Int) -> Unit,
     onShuffleAll: (List<TrackEntity>) -> Unit,
-    onReorderTracks: (List<TrackEntity>) -> Unit,
+    onToggleFavorite: (TrackEntity) -> Unit,
     onAutoCompleteMetadata: (TrackEntity) -> Unit,
     onAddToPlaylist: (TrackEntity) -> Unit,
     onDeleteTrack: (TrackEntity) -> Unit,
+    onSelectPlaylist: (Long?) -> Unit,
+    onCreatePlaylist: (String, String) -> Unit,
+    onRenamePlaylist: (Long, String, String) -> Unit,
+    onDeletePlaylist: (Long) -> Unit,
+    onAddTrackToPlaylist: (Long, TrackEntity) -> Unit,
+    onRemoveTrackFromPlaylist: (Long, TrackEntity) -> Unit,
+    onReorderPlaylistTracks: (Long, List<TrackEntity>) -> Unit,
+    onOpenStats: () -> Unit,
+    onOpenNowPlaying: () -> Unit = {},
+    onTogglePlayPause: () -> Unit = {},
     onActivePageChanged: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val photonColors = LocalPhotonColors.current
-    val pages = LibraryFormatPage.entries
+    val scope = rememberCoroutineScope()
+    val pages = LibraryHubPage.entries
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { pages.size })
+    var selectedGenreName by remember { mutableStateOf<String?>(null) }
+
+    val genreCount = remember(allLibraryTracks) { buildGenreFolders(allLibraryTracks).size }
+
+    val filteredPlaylists = remember(playlists, searchQuery) {
+        val q = searchQuery.trim().lowercase()
+        if (q.isEmpty()) playlists
+        else playlists.filter {
+            it.name.lowercase().contains(q) || it.description.lowercase().contains(q)
+        }
+    }
 
     LaunchedEffect(pagerState.currentPage) {
         onActivePageChanged(pagerState.currentPage)
     }
 
+    val playTrackWithSearchCommit: (List<TrackEntity>, Int) -> Unit = { list, index ->
+        if (searchQuery.isNotBlank()) {
+            onCommitSearchQuery(searchQuery)
+        }
+        onPlayTrack(list, index)
+    }
+
     Column(modifier = modifier.fillMaxSize()) {
-        // 1. Pinned Top Search Bar (right at the top of the screen)
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchQueryChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-                .testTag("library_search_input"),
-            placeholder = {
-                Text(
-                    "Search songs, artist, genre, album, publisher, year...",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            },
-            leadingIcon = {
-                Icon(
-                    Icons.Rounded.Search,
-                    contentDescription = "Search library",
-                    tint = photonColors.photonGlow
-                )
-            },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { onSearchQueryChange("") }) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Clear search")
-                    }
-                }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(16.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = photonColors.photonGlow,
-                unfocusedBorderColor = photonColors.cardBorder,
-                focusedContainerColor = photonColors.glassSurface,
-                unfocusedContainerColor = photonColors.glassSurface
-            )
+        // 1. Pinned Top Search Bar with Recent Query History & Live Suggestions
+        SearchBarWithHistory(
+            searchQuery = searchQuery,
+            searchHistory = searchHistory,
+            onSearchQueryChange = onSearchQueryChange,
+            onCommitSearchQuery = onCommitSearchQuery,
+            onRemoveHistoryItem = onRemoveSearchHistoryItem,
+            onClearHistory = onClearSearchHistory
         )
 
-        // Minimal Page Indicator Strip (no filter tabs — swipe horizontally across dedicated pages)
+        // 2. Minimal Page Indicator Strip (zero filter tabs — swipe horizontally across dedicated pages)
         val activePage = pages[pagerState.currentPage]
         Row(
             modifier = Modifier
@@ -178,13 +214,13 @@ fun LibraryScreen(
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                     color = photonColors.photonGlow
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     pages.forEachIndexed { idx, _ ->
                         val isCurrent = idx == pagerState.currentPage
                         Box(
                             modifier = Modifier
                                 .height(6.dp)
-                                .width(if (isCurrent) 18.dp else 6.dp)
+                                .width(if (isCurrent) 20.dp else 7.dp)
                                 .clip(CircleShape)
                                 .background(
                                     if (isCurrent) photonColors.photonGlow
@@ -206,68 +242,133 @@ fun LibraryScreen(
                     modifier = Modifier.size(14.dp)
                 )
                 Text(
-                    text = if (pagerState.currentPage == 0) {
-                        "Swipe for 6 codec pages"
-                    } else {
-                        "Page ${pagerState.currentPage + 1}/${pages.size}"
-                    },
+                    text = activePage.swipeHint,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // 2. Dedicated Swipeable Pages (All Tracks, MP3, FLAC, WAV, Opus, M4A/AAC, Ogg Vorbis — zero tabs)
+        // 3. Three Dedicated Swipeable Pages: Music Library -> Genres -> Playlists
         HorizontalPager(
             state = pagerState,
             beyondViewportPageCount = 1,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .testTag("library_format_pager")
+                .testTag("library_hub_pager")
         ) { pageIndex ->
-            val page = pages[pageIndex]
-            val pageTracks = remember(tracks, page) {
-                if (page.formatKey == null) {
-                    tracks
-                } else {
-                    tracks.filter { it.format.equals(page.formatKey, ignoreCase = true) }
+            when (pages[pageIndex]) {
+                LibraryHubPage.MUSIC_LIBRARY -> {
+                    MusicLibraryHomePage(
+                        tracks = tracks,
+                        favoriteTracks = favoriteTracks,
+                        recentlyPlayedTracks = recentlyPlayedTracks,
+                        totalLibraryCount = totalLibraryCount,
+                        genreCount = genreCount,
+                        playlistCount = playlists.size,
+                        currentTrackId = currentTrackId,
+                        currentTrack = currentTrack,
+                        signalInfo = signalInfo,
+                        isPlaying = isPlaying,
+                        searchQuery = searchQuery,
+                        sortOption = sortOption,
+                        sortDirection = sortDirection,
+                        monitorStatus = monitorStatus,
+                        onSortOptionSelect = onSortOptionSelect,
+                        onToggleSortDirection = onToggleSortDirection,
+                        onImportFilesClick = onImportFilesClick,
+                        onWatchFolderClick = onWatchFolderClick,
+                        onScanFoldersNow = onScanFoldersNow,
+                        onGenerateStudioWav = onGenerateStudioWav,
+                        onPlayTrack = playTrackWithSearchCommit,
+                        onShuffleAll = onShuffleAll,
+                        onToggleFavorite = onToggleFavorite,
+                        onAutoCompleteMetadata = onAutoCompleteMetadata,
+                        onAddToPlaylist = onAddToPlaylist,
+                        onDeleteTrack = onDeleteTrack,
+                        onJumpToGenres = {
+                            scope.launch { pagerState.animateScrollToPage(LibraryHubPage.GENRES.ordinal) }
+                        },
+                        onJumpToPlaylists = {
+                            scope.launch { pagerState.animateScrollToPage(LibraryHubPage.PLAYLISTS.ordinal) }
+                        },
+                        onOpenStats = onOpenStats,
+                        onOpenNowPlaying = onOpenNowPlaying,
+                        onTogglePlayPause = onTogglePlayPause
+                    )
+                }
+
+                LibraryHubPage.GENRES -> {
+                    GenresFolderPage(
+                        tracks = tracks,
+                        totalLibraryCount = totalLibraryCount,
+                        currentTrackId = currentTrackId,
+                        isPlaying = isPlaying,
+                        searchQuery = searchQuery,
+                        selectedGenreName = selectedGenreName,
+                        onSelectGenre = { genre ->
+                            if (genre != null && searchQuery.isNotBlank()) {
+                                onCommitSearchQuery(searchQuery)
+                            }
+                            selectedGenreName = genre
+                        },
+                        onPlayTrack = playTrackWithSearchCommit,
+                        onShuffleAll = onShuffleAll,
+                        onAutoCompleteMetadata = onAutoCompleteMetadata,
+                        onAddToPlaylist = onAddToPlaylist,
+                        onDeleteTrack = onDeleteTrack,
+                        onImportFilesClick = onImportFilesClick,
+                        onWatchFolderClick = onWatchFolderClick,
+                        onGenerateStudioWav = onGenerateStudioWav
+                    )
+                }
+
+                LibraryHubPage.PLAYLISTS -> {
+                    PlaylistsScreen(
+                        playlists = filteredPlaylists,
+                        allLibraryTracks = allLibraryTracks,
+                        selectedPlaylistId = selectedPlaylistId,
+                        selectedPlaylistTracks = selectedPlaylistTracks,
+                        currentTrackId = currentTrackId,
+                        isPlaying = isPlaying,
+                        onSelectPlaylist = { id ->
+                            if (id != null && searchQuery.isNotBlank()) {
+                                onCommitSearchQuery(searchQuery)
+                            }
+                            onSelectPlaylist(id)
+                        },
+                        onCreatePlaylist = onCreatePlaylist,
+                        onRenamePlaylist = onRenamePlaylist,
+                        onDeletePlaylist = onDeletePlaylist,
+                        onAddTrackToPlaylist = onAddTrackToPlaylist,
+                        onRemoveTrackFromPlaylist = onRemoveTrackFromPlaylist,
+                        onReorderPlaylistTracks = onReorderPlaylistTracks,
+                        onPlayTracks = playTrackWithSearchCommit,
+                        onShuffleTracks = onShuffleAll,
+                        onAutoCompleteMetadata = onAutoCompleteMetadata
+                    )
                 }
             }
-
-            DedicatedFormatTrackPage(
-                page = page,
-                pageTracks = pageTracks,
-                totalLibraryCount = totalLibraryCount,
-                currentTrackId = currentTrackId,
-                isPlaying = isPlaying,
-                searchQuery = searchQuery,
-                sortOption = sortOption,
-                sortDirection = sortDirection,
-                monitorStatus = monitorStatus,
-                onSortOptionSelect = onSortOptionSelect,
-                onToggleSortDirection = onToggleSortDirection,
-                onImportFilesClick = onImportFilesClick,
-                onWatchFolderClick = onWatchFolderClick,
-                onScanFoldersNow = onScanFoldersNow,
-                onGenerateStudioWav = onGenerateStudioWav,
-                onPlayTrack = onPlayTrack,
-                onShuffleAll = onShuffleAll,
-                onReorderTracks = onReorderTracks,
-                onAutoCompleteMetadata = onAutoCompleteMetadata,
-                onAddToPlaylist = onAddToPlaylist,
-                onDeleteTrack = onDeleteTrack
-            )
         }
     }
 }
 
+/**
+ * Home Music Library page featuring a BlackPlayer EX-style contained side-by-side swipable
+ * song columns shelf so songs never dominate the entire vertical screen.
+ */
 @Composable
-private fun DedicatedFormatTrackPage(
-    page: LibraryFormatPage,
-    pageTracks: List<TrackEntity>,
+private fun MusicLibraryHomePage(
+    tracks: List<TrackEntity>,
+    favoriteTracks: List<TrackEntity>,
+    recentlyPlayedTracks: List<TrackEntity>,
     totalLibraryCount: Int,
+    genreCount: Int,
+    playlistCount: Int,
     currentTrackId: Long?,
+    currentTrack: TrackEntity?,
+    signalInfo: AudioSignalInfo,
     isPlaying: Boolean,
     searchQuery: String,
     sortOption: SortOption,
@@ -281,253 +382,318 @@ private fun DedicatedFormatTrackPage(
     onGenerateStudioWav: () -> Unit,
     onPlayTrack: (List<TrackEntity>, Int) -> Unit,
     onShuffleAll: (List<TrackEntity>) -> Unit,
-    onReorderTracks: (List<TrackEntity>) -> Unit,
+    onToggleFavorite: (TrackEntity) -> Unit,
+    onAutoCompleteMetadata: (TrackEntity) -> Unit,
+    onAddToPlaylist: (TrackEntity) -> Unit,
+    onDeleteTrack: (TrackEntity) -> Unit,
+    onJumpToGenres: () -> Unit,
+    onJumpToPlaylists: () -> Unit,
+    onOpenStats: () -> Unit,
+    onOpenNowPlaying: () -> Unit,
+    onTogglePlayPause: () -> Unit
+) {
+    val photonColors = LocalPhotonColors.current
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("library_page_music_library"),
+        contentPadding = PaddingValues(top = 6.dp, bottom = 156.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Signature Photon Deck Hero Console
+        item(key = "hero_banner") {
+            PhotonDeckHero(
+                totalTracks = totalLibraryCount,
+                genreCount = genreCount,
+                playlistCount = playlistCount,
+                isPlaying = isPlaying,
+                monitorStatus = monitorStatus,
+                onImportFilesClick = onImportFilesClick,
+                onWatchFolderClick = onWatchFolderClick,
+                onScanFoldersNow = onScanFoldersNow,
+                onPlayAll = { if (tracks.isNotEmpty()) onPlayTrack(tracks, 0) },
+                onShuffleAll = { onShuffleAll(tracks) },
+                currentTrack = currentTrack,
+                signalInfo = signalInfo,
+                onOpenNowPlaying = onOpenNowPlaying,
+                onTogglePlayPause = onTogglePlayPause
+            )
+        }
+
+        // Compact Favorites & Recently Played Quick Shelf
+        if (favoriteTracks.isNotEmpty() || recentlyPlayedTracks.isNotEmpty()) {
+            item(key = "home_highlights_shelf") {
+                HomeQuickHighlightsStrip(
+                    favoriteTracks = favoriteTracks,
+                    recentlyPlayedTracks = recentlyPlayedTracks,
+                    currentTrackId = currentTrackId,
+                    isPlaying = isPlaying,
+                    onPlayTrack = onPlayTrack,
+                    onOpenStats = onOpenStats
+                )
+            }
+        }
+
+        // Compact Sort Controls
+        item(key = "sort_bar") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SORT",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = photonColors.photonGlow
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    SortOption.entries.forEach { option ->
+                        val selected = sortOption == option
+                        FilterChip(
+                            selected = selected,
+                            onClick = { onSortOptionSelect(option) },
+                            label = {
+                                Text(
+                                    text = option.label,
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            },
+                            trailingIcon = if (selected && option != SortOption.CUSTOM_ORDER) {
+                                {
+                                    Icon(
+                                        imageVector = if (sortDirection == SortDirection.ASC) {
+                                            Icons.Rounded.ArrowUpward
+                                        } else {
+                                            Icons.Rounded.ArrowDownward
+                                        },
+                                        contentDescription = "Sort direction",
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            } else null,
+                            modifier = Modifier.testTag("sort_chip_${option.name.lowercase()}"),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                selectedLabelColor = photonColors.photonGlow,
+                                selectedTrailingIconColor = photonColors.photonGlow
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = selected,
+                                borderColor = photonColors.cardBorder.copy(alpha = 0.7f),
+                                selectedBorderColor = photonColors.photonGlow
+                            )
+                        )
+                    }
+                }
+                if (sortOption != SortOption.CUSTOM_ORDER) {
+                    IconButton(
+                        onClick = onToggleSortDirection,
+                        modifier = Modifier.testTag("toggle_sort_direction")
+                    ) {
+                        Icon(
+                            imageVector = if (sortDirection == SortDirection.ASC) {
+                                Icons.Rounded.ArrowUpward
+                            } else {
+                                Icons.Rounded.ArrowDownward
+                            },
+                            contentDescription = "Toggle sort direction",
+                            tint = photonColors.photonGlow
+                        )
+                    }
+                }
+            }
+        }
+
+        // BlackPlayer EX-style Contained Side-by-Side Swipable Song Columns
+        if (tracks.isEmpty()) {
+            item(key = "empty_state") {
+                EmptyLibraryCard(
+                    hasAnyTracks = totalLibraryCount > 0,
+                    hasSearchQuery = searchQuery.isNotBlank(),
+                    onImportFilesClick = onImportFilesClick,
+                    onWatchFolderClick = onWatchFolderClick,
+                    onGenerateStudioWav = onGenerateStudioWav
+                )
+            }
+        } else {
+            item(key = "side_by_side_song_columns") {
+                BlackPlayerSideBySideSongColumns(
+                    tracks = tracks,
+                    currentTrackId = currentTrackId,
+                    isPlaying = isPlaying,
+                    onPlayTrack = onPlayTrack,
+                    onToggleFavorite = onToggleFavorite,
+                    onAutoCompleteMetadata = onAutoCompleteMetadata,
+                    onAddToPlaylist = onAddToPlaylist,
+                    onDeleteTrack = onDeleteTrack
+                )
+            }
+        }
+
+        // Compact Quick Access Deck to Genre Folders & Playlists (keeps Home balanced so songs don't dominate)
+        item(key = "home_explore_deck") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                HomeExploreCard(
+                    icon = Icons.Rounded.Folder,
+                    title = "Genre Folders",
+                    subtitle = "$genreCount genre${if (genreCount == 1) "" else "s"}",
+                    accent = photonColors.losslessBadge,
+                    tag = "home_jump_genres_card",
+                    onClick = onJumpToGenres,
+                    modifier = Modifier.weight(1f)
+                )
+                HomeExploreCard(
+                    icon = Icons.Rounded.QueueMusic,
+                    title = "Playlists",
+                    subtitle = "$playlistCount playlist${if (playlistCount == 1) "" else "s"}",
+                    accent = photonColors.nebulaAccent,
+                    tag = "home_jump_playlists_card",
+                    onClick = onJumpToPlaylists,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * BlackPlayer EX-inspired side-by-side swipable song columns shelf.
+ * Groups all songs into neat vertical columns placed side-by-side in a snapping horizontal carousel
+ * so songs stay compact and never take over the entire Home menu screen.
+ */
+@Composable
+private fun BlackPlayerSideBySideSongColumns(
+    tracks: List<TrackEntity>,
+    currentTrackId: Long?,
+    isPlaying: Boolean,
+    onPlayTrack: (List<TrackEntity>, Int) -> Unit,
+    onToggleFavorite: (TrackEntity) -> Unit,
     onAutoCompleteMetadata: (TrackEntity) -> Unit,
     onAddToPlaylist: (TrackEntity) -> Unit,
     onDeleteTrack: (TrackEntity) -> Unit
 ) {
     val photonColors = LocalPhotonColors.current
-    val dragAllowed = page == LibraryFormatPage.ALL && searchQuery.isBlank()
-
-    ReorderableTrackLazyColumn(
-        tracks = pageTracks,
-        currentTrackId = currentTrackId,
-        isPlaying = isPlaying,
-        dragEnabled = dragAllowed,
-        onTrackClick = onPlayTrack,
-        onTracksReordered = onReorderTracks,
-        onAutoCompleteMetadata = onAutoCompleteMetadata,
-        onAddToPlaylist = onAddToPlaylist,
-        onRemoveTrack = onDeleteTrack,
-        contentPadding = PaddingValues(top = 6.dp, bottom = 156.dp),
-        modifier = Modifier
-            .fillMaxSize()
-            .testTag("library_page_${page.name.lowercase()}"),
-        headerContent = {
-            if (page == LibraryFormatPage.ALL) {
-                item(key = "hero_banner") {
-                    PhotonLibraryHero(
-                        totalTracks = totalLibraryCount,
-                        monitorStatus = monitorStatus,
-                        onImportFilesClick = onImportFilesClick,
-                        onWatchFolderClick = onWatchFolderClick,
-                        onScanFoldersNow = onScanFoldersNow,
-                        onPlayAll = { if (pageTracks.isNotEmpty()) onPlayTrack(pageTracks, 0) },
-                        onShuffleAll = { onShuffleAll(pageTracks) }
-                    )
-                }
-            } else {
-                item(key = "format_page_banner_${page.name}") {
-                    FormatDedicatedHeroCard(
-                        page = page,
-                        trackCount = pageTracks.size,
-                        onPlayAll = { if (pageTracks.isNotEmpty()) onPlayTrack(pageTracks, 0) },
-                        onShuffleAll = { onShuffleAll(pageTracks) },
-                        onImportFilesClick = onImportFilesClick
-                    )
-                }
-            }
-
-            // Comprehensive Sort Controls (Custom, Artist, Genre, Album, Publisher, Year, Title, Added)
-            item(key = "sort_bar_${page.name}") {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "SORT",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = photonColors.photonGlow
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            SortOption.entries.forEach { option ->
-                                val selected = sortOption == option
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { onSortOptionSelect(option) },
-                                    label = {
-                                        Text(
-                                            text = option.label,
-                                            style = MaterialTheme.typography.labelMedium
-                                        )
-                                    },
-                                    trailingIcon = if (selected && option != SortOption.CUSTOM_ORDER) {
-                                        {
-                                            Icon(
-                                                imageVector = if (sortDirection == SortDirection.ASC) {
-                                                    Icons.Rounded.ArrowUpward
-                                                } else {
-                                                    Icons.Rounded.ArrowDownward
-                                                },
-                                                contentDescription = "Sort direction",
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                    } else null,
-                                    modifier = Modifier.testTag("sort_chip_${page.name.lowercase()}_${option.name.lowercase()}"),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        selectedLabelColor = photonColors.photonGlow,
-                                        selectedTrailingIconColor = photonColors.photonGlow
-                                    ),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        enabled = true,
-                                        selected = selected,
-                                        borderColor = photonColors.cardBorder.copy(alpha = 0.7f),
-                                        selectedBorderColor = photonColors.photonGlow
-                                    )
-                                )
-                            }
-                        }
-                        if (sortOption != SortOption.CUSTOM_ORDER) {
-                            IconButton(
-                                onClick = onToggleSortDirection,
-                                modifier = Modifier.testTag("toggle_sort_direction_${page.name.lowercase()}")
-                            ) {
-                                Icon(
-                                    imageVector = if (sortDirection == SortDirection.ASC) {
-                                        Icons.Rounded.ArrowUpward
-                                    } else {
-                                        Icons.Rounded.ArrowDownward
-                                    },
-                                    contentDescription = "Toggle sort direction",
-                                    tint = photonColors.photonGlow
-                                )
-                            }
-                        }
-                    }
-
-                    AnimatedVisibility(visible = pageTracks.isNotEmpty() && dragAllowed) {
-                        Text(
-                            text = "Tip: Long-press any track or drag its handle to reorder",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-            }
-
-            if (pageTracks.isEmpty()) {
-                item(key = "empty_state_${page.name}") {
-                    EmptyLibraryCard(
-                        page = page,
-                        hasAnyTracks = totalLibraryCount > 0,
-                        hasSearchQuery = searchQuery.isNotBlank(),
-                        onImportFilesClick = onImportFilesClick,
-                        onWatchFolderClick = onWatchFolderClick,
-                        onGenerateStudioWav = onGenerateStudioWav
-                    )
-                }
-            }
-        }
-    )
-}
-
-@Composable
-private fun FormatDedicatedHeroCard(
-    page: LibraryFormatPage,
-    trackCount: Int,
-    onPlayAll: () -> Unit,
-    onShuffleAll: () -> Unit,
-    onImportFilesClick: () -> Unit
-) {
-    val photonColors = LocalPhotonColors.current
-    val accent = when (page) {
-        LibraryFormatPage.FLAC -> photonColors.losslessBadge
-        LibraryFormatPage.WAV -> photonColors.goldBadge
-        LibraryFormatPage.OPUS -> Color(0xFF22D3EE)
-        LibraryFormatPage.AAC -> photonColors.nebulaAccent
-        LibraryFormatPage.OGG -> Color(0xFFF472B6)
-        else -> photonColors.photonGlow
+    val rowsPerColumn = when {
+        tracks.size <= 2 -> 1
+        tracks.size <= 6 -> 2
+        tracks.size <= 11 -> 3
+        else -> 4
     }
 
-    Surface(
+    val columns = remember(tracks, rowsPerColumn) {
+        tracks.mapIndexed { index, track -> index to track }.chunked(rowsPerColumn)
+    }
+
+    val rowState = rememberLazyListState()
+    val snapBehavior = rememberSnapFlingBehavior(lazyListState = rowState)
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(22.dp),
-        color = photonColors.glassSurface,
-        border = BorderStroke(1.2.dp, accent.copy(alpha = 0.55f))
+            .testTag("home_song_columns_section"),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "${page.title} AUDIO",
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                    color = accent
-                )
-                Text(
-                    text = page.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "$trackCount ${page.title} track${if (trackCount == 1) "" else "s"}",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    text = "ALL SONGS",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = photonColors.photonGlow.copy(alpha = 0.14f),
+                    border = BorderStroke(0.75.dp, photonColors.photonGlow.copy(alpha = 0.45f))
+                ) {
+                    Text(
+                        text = "${tracks.size}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = photonColors.photonGlow,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
+                }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (trackCount > 0) {
-                    Surface(
-                        onClick = onShuffleAll,
-                        shape = CircleShape,
-                        color = accent.copy(alpha = 0.16f),
-                        border = BorderStroke(1.dp, accent.copy(alpha = 0.6f)),
-                        modifier = Modifier.size(44.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Rounded.Shuffle,
-                                contentDescription = "Shuffle ${page.title}",
-                                tint = accent,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    Surface(
-                        onClick = onPlayAll,
-                        shape = CircleShape,
-                        color = accent,
-                        modifier = Modifier.size(44.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Rounded.PlayArrow,
-                                contentDescription = "Play all ${page.title}",
-                                tint = Color(0xFF040818),
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
+            Text(
+                text = if (columns.size > 1) {
+                    "${columns.size} columns · Swipe ↔"
                 } else {
-                    OutlinedButton(
-                        onClick = onImportFilesClick,
-                        shape = RoundedCornerShape(12.dp)
+                    "Side-by-side view"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            // Keep columns narrow enough that two columns appear visibly side-by-side on phones & tablets
+            val columnWidth = if (columns.size > 1) {
+                (maxWidth * 0.72f).coerceIn(228.dp, 296.dp)
+            } else {
+                (maxWidth - 32.dp).coerceAtMost(360.dp)
+            }
+
+            LazyRow(
+                state = rowState,
+                flingBehavior = snapBehavior,
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("home_song_columns_row")
+            ) {
+                itemsIndexed(
+                    items = columns,
+                    key = { colIdx, col -> "col_${colIdx}_${col.firstOrNull()?.second?.id ?: 0L}" }
+                ) { _, columnEntries ->
+                    Surface(
+                        modifier = Modifier.width(columnWidth),
+                        shape = RoundedCornerShape(18.dp),
+                        color = photonColors.glassSurface,
+                        border = BorderStroke(0.9.dp, photonColors.cardBorder.copy(alpha = 0.75f))
                     ) {
-                        Text("Import")
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            columnEntries.forEach { (trackIndex, track) ->
+                                CompactColumnTrackTile(
+                                    track = track,
+                                    isCurrent = track.id == currentTrackId,
+                                    isPlaying = track.id == currentTrackId && isPlaying,
+                                    onClick = { onPlayTrack(tracks, trackIndex) },
+                                    onToggleFavorite = { onToggleFavorite(track) },
+                                    onAutoCompleteMetadata = { onAutoCompleteMetadata(track) },
+                                    onAddToPlaylist = { onAddToPlaylist(track) },
+                                    onRemoveTrack = { onDeleteTrack(track) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -536,217 +702,394 @@ private fun FormatDedicatedHeroCard(
 }
 
 @Composable
-private fun PhotonLibraryHero(
-    totalTracks: Int,
-    monitorStatus: FolderMonitorStatus,
-    onImportFilesClick: () -> Unit,
-    onWatchFolderClick: () -> Unit,
-    onScanFoldersNow: () -> Unit,
-    onPlayAll: () -> Unit,
-    onShuffleAll: () -> Unit
+private fun CompactColumnTrackTile(
+    track: TrackEntity,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onAutoCompleteMetadata: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onRemoveTrack: () -> Unit
 ) {
     val photonColors = LocalPhotonColors.current
+    var menuExpanded by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.2.dp, photonColors.photonGlow.copy(alpha = 0.45f)),
-        color = MaterialTheme.colorScheme.surfaceContainerLow
+            .testTag("track_card_${track.id}")
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = if (isCurrent) {
+            photonColors.photonGlow.copy(alpha = 0.14f)
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f)
+        },
+        border = BorderStroke(
+            width = if (isCurrent) 1.1.dp else 0.6.dp,
+            color = if (isCurrent) photonColors.photonGlow.copy(alpha = 0.75f) else photonColors.cardBorder.copy(alpha = 0.4f)
+        )
     ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Image(
-                painter = painterResource(id = R.drawable.img_galaxy_hero),
-                contentDescription = "Photon Galaxy cosmic nebula header",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(206.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, top = 7.dp, bottom = 7.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PhotonAlbumArt(
+                artworkUri = track.artworkUri,
+                contentDescription = "Album art for ${track.title}",
+                size = 42.dp,
+                cornerRadius = 9.dp,
+                isPlaying = isPlaying
             )
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(206.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0x99040818),
-                                Color(0xCC070F2B),
-                                Color(0xF2040818)
-                            )
-                        )
-                    )
-            )
+            Spacer(modifier = Modifier.width(9.dp))
 
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "PHOTON DECK",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                            color = Color(0xFFECF4FF)
-                        )
-                        Text(
-                            text = "$totalTracks track${if (totalTracks == 1) "" else "s"} • MP3 · FLAC · WAV · Opus · AAC · Ogg",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color(0xFF38E4FF),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (totalTracks > 0) {
-                            Surface(
-                                onClick = onShuffleAll,
-                                shape = CircleShape,
-                                color = Color(0x3338E4FF),
-                                border = BorderStroke(1.dp, Color(0x8838E4FF)),
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .testTag("hero_shuffle_button")
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        Icons.Rounded.Shuffle,
-                                        contentDescription = "Shuffle library",
-                                        tint = Color(0xFFECF4FF),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Surface(
-                                onClick = onPlayAll,
-                                shape = CircleShape,
-                                color = Color(0xFF38E4FF),
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .testTag("hero_play_all_button")
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        Icons.Rounded.PlayArrow,
-                                        contentDescription = "Play all tracks",
-                                        tint = Color(0xFF040818),
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                            }
-                        }
+                    Text(
+                        text = track.title,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = if (isCurrent) photonColors.photonGlow else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isCurrent) {
+                        PhotonEqualizerBars(isPlaying = isPlaying)
                     }
                 }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        text = track.artist,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    AudioFormatBadge(format = track.format)
+                    Text(
+                        text = formatDurationMs(track.durationMs),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        maxLines = 1
+                    )
+                }
+            }
 
-                // Live Folder Monitor Status Strip
+            IconButton(
+                onClick = onToggleFavorite,
+                modifier = Modifier
+                    .size(34.dp)
+                    .testTag("track_fav_${track.id}")
+            ) {
+                Icon(
+                    imageVector = if (track.isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    contentDescription = if (track.isFavorite) "Remove favorite" else "Add favorite",
+                    tint = if (track.isFavorite) Color(0xFFFF5C8A) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("track_menu_${track.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MoreVert,
+                        contentDescription = "Options for ${track.title}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (track.isFavorite) "Remove from Favorites" else "Add to Favorites") },
+                        leadingIcon = {
+                            Icon(
+                                if (track.isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                contentDescription = null,
+                                tint = Color(0xFFFF5C8A)
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onToggleFavorite()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Edit Metadata") },
+                        leadingIcon = {
+                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = photonColors.photonGlow)
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onAutoCompleteMetadata()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Add to Playlist") },
+                        leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onAddToPlaylist()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Remove from Library") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Rounded.DeleteOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onRemoveTrack()
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeQuickHighlightsStrip(
+    favoriteTracks: List<TrackEntity>,
+    recentlyPlayedTracks: List<TrackEntity>,
+    currentTrackId: Long?,
+    isPlaying: Boolean,
+    onPlayTrack: (List<TrackEntity>, Int) -> Unit,
+    onOpenStats: () -> Unit
+) {
+    val photonColors = LocalPhotonColors.current
+    var showFavorites by remember(favoriteTracks.isEmpty(), recentlyPlayedTracks.isEmpty()) {
+        mutableStateOf(favoriteTracks.isNotEmpty())
+    }
+    val activeTracks = if (showFavorites && favoriteTracks.isNotEmpty()) {
+        favoriteTracks
+    } else if (recentlyPlayedTracks.isNotEmpty()) {
+        recentlyPlayedTracks
+    } else {
+        favoriteTracks
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("home_highlights_strip"),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = showFavorites,
+                    onClick = { showFavorites = true },
+                    enabled = favoriteTracks.isNotEmpty(),
+                    label = { Text("Favorites (${favoriteTracks.size})", style = MaterialTheme.typography.labelMedium) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Rounded.Favorite,
+                            contentDescription = null,
+                            tint = Color(0xFFFF5C8A),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    },
+                    modifier = Modifier.testTag("home_tab_favorites")
+                )
+                FilterChip(
+                    selected = !showFavorites,
+                    onClick = { showFavorites = false },
+                    enabled = recentlyPlayedTracks.isNotEmpty(),
+                    label = { Text("Recent (${recentlyPlayedTracks.size})", style = MaterialTheme.typography.labelMedium) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Rounded.History,
+                            contentDescription = null,
+                            tint = photonColors.photonGlow,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    },
+                    modifier = Modifier.testTag("home_tab_recent")
+                )
+            }
+
+            Text(
+                text = "Stats →",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = photonColors.photonGlow,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onOpenStats)
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                    .testTag("home_open_stats_link")
+            )
+        }
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            itemsIndexed(
+                items = activeTracks.take(12),
+                key = { idx, track -> "highlight_${if (showFavorites) "fav" else "rec"}_${track.id}_$idx" }
+            ) { idx, track ->
+                val isCurrent = track.id == currentTrackId
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0x880B1A45),
-                    border = BorderStroke(0.8.dp, Color(0x5538E4FF))
+                    onClick = { onPlayTrack(activeTracks, idx) },
+                    shape = RoundedCornerShape(15.dp),
+                    color = if (isCurrent) photonColors.photonGlow.copy(alpha = 0.16f) else photonColors.glassSurface,
+                    border = BorderStroke(
+                        width = if (isCurrent) 1.2.dp else 0.8.dp,
+                        color = if (isCurrent) photonColors.photonGlow else photonColors.cardBorder.copy(alpha = 0.7f)
+                    ),
+                    modifier = Modifier
+                        .width(168.dp)
+                        .testTag("home_highlight_card_${track.id}")
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        modifier = Modifier.padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (monitorStatus.isScanning || monitorStatus.isEnrichingMetadata) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = Color(0xFF38E4FF)
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Rounded.Radar,
-                                contentDescription = "Folder monitor active",
-                                tint = Color(0xFF34D399),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                        Text(
-                            text = monitorStatus.lastEventMessage,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFD6E8FF),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
+                        PhotonAlbumArt(
+                            artworkUri = track.artworkUri,
+                            contentDescription = track.title,
+                            size = 40.dp,
+                            cornerRadius = 9.dp,
+                            isPlaying = isCurrent && isPlaying
                         )
-                        Surface(
-                            onClick = onScanFoldersNow,
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0x3338E4FF),
-                            modifier = Modifier.testTag("scan_folders_now_chip")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    Icons.Rounded.Refresh,
-                                    contentDescription = "Scan watched folders",
-                                    tint = Color(0xFF38E4FF),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = "Scan",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF38E4FF)
-                                )
-                            }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = track.title,
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = if (isCurrent) photonColors.photonGlow else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = track.artist,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
+            }
+        }
+    }
+}
 
-                // Quick Import & Watch Folder Actions
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Button(
-                        onClick = onImportFilesClick,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp)
-                            .testTag("import_audio_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF38E4FF),
-                            contentColor = Color(0xFF040818)
+@Composable
+private fun HomeExploreCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    accent: Color,
+    tag: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val photonColors = LocalPhotonColors.current
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = photonColors.glassSurface,
+        border = BorderStroke(
+            width = 1.1.dp,
+            brush = Brush.linearGradient(
+                colors = listOf(
+                    accent.copy(alpha = 0.72f),
+                    accent.copy(alpha = 0.22f)
+                )
+            )
+        ),
+        shadowElevation = 6.dp,
+        modifier = modifier.testTag(tag)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.14f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 13.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    accent.copy(alpha = 0.28f),
+                                    accent.copy(alpha = 0.10f)
+                                )
+                            )
                         ),
-                        contentPadding = PaddingValues(horizontal = 10.dp)
-                    ) {
-                        Icon(Icons.Rounded.AudioFile, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Import Files", style = MaterialTheme.typography.labelLarge, maxLines = 1)
-                    }
-
-                    OutlinedButton(
-                        onClick = onWatchFolderClick,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp)
-                            .testTag("watch_folder_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, Color(0xAA38E4FF)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFECF4FF)),
-                        contentPadding = PaddingValues(horizontal = 10.dp)
-                    ) {
-                        Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Watch Folder", style = MaterialTheme.typography.labelLarge, maxLines = 1)
-                    }
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = title,
+                        tint = accent,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFFF0F7FF),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -755,7 +1098,6 @@ private fun PhotonLibraryHero(
 
 @Composable
 private fun EmptyLibraryCard(
-    page: LibraryFormatPage,
     hasAnyTracks: Boolean,
     hasSearchQuery: Boolean,
     onImportFilesClick: () -> Unit,
@@ -767,7 +1109,7 @@ private fun EmptyLibraryCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 4.dp),
         shape = RoundedCornerShape(22.dp),
         color = photonColors.glassSurface,
         border = BorderStroke(1.dp, photonColors.cardBorder)
@@ -775,13 +1117,13 @@ private fun EmptyLibraryCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(24.dp),
+                .padding(22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(64.dp)
+                    .size(58.dp)
                     .clip(CircleShape)
                     .background(photonColors.photonGlow.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center
@@ -790,16 +1132,15 @@ private fun EmptyLibraryCard(
                     imageVector = Icons.Rounded.LibraryMusic,
                     contentDescription = null,
                     tint = photonColors.photonGlow,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(30.dp)
                 )
             }
 
             Text(
                 text = when {
-                    hasSearchQuery -> "No Matching ${page.title}"
-                    page != LibraryFormatPage.ALL -> "No ${page.title} Files Yet"
-                    hasAnyTracks -> "No Matching Tracks"
-                    else -> "Your Photon Galaxy Is Ready"
+                    hasSearchQuery -> "No Matching Songs"
+                    hasAnyTracks -> "No Songs in View"
+                    else -> "Your Galaxy is ready"
                 },
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface
@@ -807,29 +1148,25 @@ private fun EmptyLibraryCard(
 
             Text(
                 text = when {
-                    hasSearchQuery -> "Try clearing the top search bar to see all ${page.title.lowercase()} tracks."
-                    page == LibraryFormatPage.WAV -> "Import WAV audio files from your device or generate playable studio WAV tracks below."
-                    page != LibraryFormatPage.ALL -> "Import ${page.title} files or watch a music folder to automatically populate your dedicated ${page.title} page."
-                    else -> "Import MP3, FLAC, WAV, Opus, M4A/AAC, or Ogg Vorbis files, link a watched folder for automatic import & web metadata discovery, or synthesize studio WAV tracks to test playback, EQ, and crossfade immediately."
+                    hasSearchQuery -> "Try clearing the top search bar to see all songs in your music library."
+                    else -> "Import audio files from your device, watch a local music folder, or generate studio WAV tracks to browse them in side-by-side columns, genre folders, and playlists."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             if (!hasSearchQuery) {
-                if (page == LibraryFormatPage.ALL || page == LibraryFormatPage.WAV) {
-                    Button(
-                        onClick = onGenerateStudioWav,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("generate_studio_wav_button_${page.name.lowercase()}"),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(Icons.Rounded.GraphicEq, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Generate Playable Studio WAV Tracks")
-                    }
+                Button(
+                    onClick = onGenerateStudioWav,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("generate_studio_wav_button"),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(Icons.Rounded.GraphicEq, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Generate Playable Studio WAV Tracks")
                 }
 
                 Row(
@@ -840,7 +1177,7 @@ private fun EmptyLibraryCard(
                         onClick = onImportFilesClick,
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp),
+                            .height(46.dp),
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         Text("Pick Audio")
@@ -849,7 +1186,7 @@ private fun EmptyLibraryCard(
                         onClick = onWatchFolderClick,
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp),
+                            .height(46.dp),
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         Text("Watch Folder")

@@ -31,7 +31,10 @@ data class TrackEntity(
     val sortOrder: Int = 0,
     val dateAdded: Long = System.currentTimeMillis(),
     val folderUri: String? = null,
-    val metadataEnriched: Boolean = false
+    val metadataEnriched: Boolean = false,
+    val isFavorite: Boolean = false,
+    val customGainDb: Float = 0f,
+    val preferredEqPreset: String? = null
 )
 
 @Entity(tableName = "playlists")
@@ -113,6 +116,11 @@ data class TrackPlayStat(
 
 data class GenrePlayStat(
     val genre: String,
+    val playCount: Int
+)
+
+data class ArtistPlayStat(
+    val artist: String,
     val playCount: Int
 )
 

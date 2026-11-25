@@ -32,6 +32,8 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.Password
 import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RestartAlt
@@ -74,10 +76,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.BuildConfig
 import com.example.data.db.ExcludedFolderEntity
+import com.example.data.db.TrackEntity
 import com.example.data.db.WatchedFolderEntity
 import com.example.data.library.FolderMonitorStatus
+import com.example.data.model.CrossfadeCurveShape
 import com.example.data.model.SleepTimerState
+import com.example.data.model.WidgetThemeMode
 import com.example.data.prefs.AppSettings
+import com.example.ui.components.AppearanceCustomizationCard
+import com.example.ui.components.WidgetStudioCard
+import com.example.ui.theme.AppFontChoice
+import com.example.ui.theme.AppWallpaperPreset
+import com.example.ui.theme.CosmicThemeSkin
 import com.example.ui.theme.LocalPhotonColors
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -90,13 +100,31 @@ private val PLAYBACK_SPEED_OPTIONS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f
 fun SettingsAndFoldersScreen(
     settings: AppSettings,
     sleepTimer: SleepTimerState,
+    currentTrack: TrackEntity?,
+    isPlaying: Boolean,
+    shuffleEnabled: Boolean,
     watchedFolders: List<WatchedFolderEntity>,
     excludedFolders: List<ExcludedFolderEntity>,
     monitorStatus: FolderMonitorStatus,
+    isApiUnlocked: Boolean,
     isCheckingUpdate: Boolean,
     updateCheckStatus: String?,
+    onRequestUnlockApi: () -> Unit,
+    onLockApi: () -> Unit,
+    onRequestChangeApiPassword: () -> Unit,
     onSetDarkMode: (Boolean) -> Unit,
+    onSelectCosmicSkin: (CosmicThemeSkin) -> Unit,
+    onSetCustomThemeColors: (Long, Long, Boolean) -> Unit,
+    onSetDynamicAlbumColors: (Boolean) -> Unit,
+    onSelectAppFont: (AppFontChoice) -> Unit,
+    onSelectWallpaperPreset: (AppWallpaperPreset) -> Unit,
+    onPickCustomWallpaper: () -> Unit,
+    onSetWallpaperDimAlpha: (Float) -> Unit,
+    onSetWidgetThemeMode: (WidgetThemeMode) -> Unit,
+    onSetWidgetGlassOpacity: (Float) -> Unit,
+    onWidgetPinnedFeedback: (String) -> Unit,
     onSetCrossfadeSeconds: (Int) -> Unit,
+    onSetCrossfadeCurve: (CrossfadeCurveShape) -> Unit,
     onSetPlaybackSpeed: (Float) -> Unit,
     onSetSkipSilenceEnabled: (Boolean) -> Unit,
     onSetPauseOnAudioDisconnect: (Boolean) -> Unit,
@@ -139,11 +167,38 @@ fun SettingsAndFoldersScreen(
                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
                 )
                 Text(
-                    text = "Playback · Audio · Scanner · Exclusions · GitHub Updates · Privacy",
+                    text = "Theme · Font · Wallpaper · Playback · Scanner · Protected API",
                     style = MaterialTheme.typography.labelMedium,
                     color = photonColors.photonGlow
                 )
             }
+        }
+
+        // Appearance, Custom Theme, Font & Wallpaper Studio
+        item(key = "appearance_studio_card") {
+            AppearanceCustomizationCard(
+                settings = settings,
+                onSelectCosmicSkin = onSelectCosmicSkin,
+                onSetCustomThemeColors = onSetCustomThemeColors,
+                onSetDynamicAlbumColors = onSetDynamicAlbumColors,
+                onSelectAppFont = onSelectAppFont,
+                onSelectWallpaperPreset = onSelectWallpaperPreset,
+                onPickCustomWallpaper = onPickCustomWallpaper,
+                onSetWallpaperDimAlpha = onSetWallpaperDimAlpha
+            )
+        }
+
+        // Home Screen Widget Studio (2x1, 4x2, 4x3+ previews + Pin to Home)
+        item(key = "widget_studio_item") {
+            WidgetStudioCard(
+                settings = settings,
+                currentTrack = currentTrack,
+                isPlaying = isPlaying,
+                shuffleEnabled = shuffleEnabled,
+                onSetWidgetThemeMode = onSetWidgetThemeMode,
+                onSetWidgetGlassOpacity = onSetWidgetGlassOpacity,
+                onWidgetPinnedFeedback = onWidgetPinnedFeedback
+            )
         }
 
         // 0. Commonly Used Playback & Audio Settings Card
@@ -341,46 +396,6 @@ fun SettingsAndFoldersScreen(
                             checked = settings.autoScanEnabled,
                             onCheckedChange = onSetAutoScanEnabled,
                             modifier = Modifier.testTag("auto_scan_switch"),
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                checkedTrackColor = photonColors.photonGlow
-                            )
-                        )
-                    }
-
-                    // Auto-Metadata Toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                Icons.Rounded.AutoAwesome,
-                                contentDescription = null,
-                                tint = photonColors.photonGlow,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Column {
-                                Text(
-                                    text = "Auto-Complete Web Metadata",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
-                                )
-                                Text(
-                                    text = "Fetch album art, artist, publisher & release date on import",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Switch(
-                            checked = settings.autoEnrichMetadata,
-                            onCheckedChange = onSetAutoEnrichMetadata,
-                            modifier = Modifier.testTag("auto_enrich_switch"),
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
                                 checkedTrackColor = photonColors.photonGlow
@@ -706,7 +721,7 @@ fun SettingsAndFoldersScreen(
             }
         }
 
-        // 3. Crossfade Transitions Card
+        // 3. Gapless Playback & Crossfade Transitions Card
         item(key = "crossfade_card") {
             Surface(
                 shape = RoundedCornerShape(20.dp),
@@ -729,23 +744,35 @@ fun SettingsAndFoldersScreen(
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Icon(Icons.Rounded.Waves, contentDescription = null, tint = photonColors.photonGlow)
-                            Text(
-                                text = "Crossfade Transitions",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                            )
+                            Column {
+                                Text(
+                                    text = "Gapless & Crossfade",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    text = if (settings.crossfadeSeconds == 0) {
+                                        "True gapless seamless transition"
+                                    } else {
+                                        settings.crossfadeCurve.subtitle
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         Text(
-                            text = if (settings.crossfadeSeconds == 0) "Off" else "${settings.crossfadeSeconds}s overlap",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = photonColors.photonGlow
+                            text = if (settings.crossfadeSeconds == 0) "Gapless" else "${settings.crossfadeSeconds}s",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = if (settings.crossfadeSeconds == 0) photonColors.losslessBadge else photonColors.photonGlow
                         )
                     }
 
                     CrossfadeVisualCurve(
                         crossfadeSeconds = settings.crossfadeSeconds,
+                        curveShape = settings.crossfadeCurve,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(44.dp)
+                            .height(50.dp)
                     )
 
                     Slider(
@@ -759,6 +786,34 @@ fun SettingsAndFoldersScreen(
                             activeTrackColor = photonColors.photonGlow
                         )
                     )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CrossfadeCurveShape.entries.forEach { shape ->
+                            val selected = settings.crossfadeCurve == shape
+                            FilterChip(
+                                selected = selected,
+                                onClick = { onSetCrossfadeCurve(shape) },
+                                enabled = settings.crossfadeSeconds > 0,
+                                label = { Text(shape.label, style = MaterialTheme.typography.labelSmall) },
+                                modifier = Modifier.testTag("crossfade_curve_${shape.name.lowercase()}"),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = photonColors.photonGlow.copy(alpha = 0.22f),
+                                    selectedLabelColor = photonColors.photonGlow
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = settings.crossfadeSeconds > 0,
+                                    selected = selected,
+                                    borderColor = photonColors.cardBorder,
+                                    selectedBorderColor = photonColors.photonGlow
+                                )
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -895,18 +950,22 @@ fun SettingsAndFoldersScreen(
             }
         }
 
-        // 6. GitHub App Updates Card
-        item(key = "github_updates_card") {
+        // 6. Password-Protected Hidden API Vault Card
+        item(key = "protected_api_vault_card") {
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = photonColors.glassSurface,
-                border = BorderStroke(1.dp, photonColors.photonGlow.copy(alpha = 0.45f))
+                border = BorderStroke(
+                    1.dp,
+                    if (isApiUnlocked) photonColors.photonGlow.copy(alpha = 0.55f)
+                    else photonColors.goldBadge.copy(alpha = 0.55f)
+                )
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -915,105 +974,224 @@ fun SettingsAndFoldersScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Rounded.SystemUpdate, contentDescription = null, tint = photonColors.photonGlow)
+                            Icon(
+                                imageVector = if (isApiUnlocked) Icons.Rounded.LockOpen else Icons.Rounded.Lock,
+                                contentDescription = null,
+                                tint = if (isApiUnlocked) photonColors.photonGlow else photonColors.goldBadge
+                            )
                             Column {
                                 Text(
-                                    text = "GitHub Release Updates",
+                                    text = if (isApiUnlocked) "Protected API Controls (Unlocked)" else "Protected API Access",
                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                                 )
                                 Text(
-                                    text = "Installed version: v${BuildConfig.VERSION_NAME}",
+                                    text = if (isApiUnlocked) {
+                                        "External metadata & release APIs unlocked for this session"
+                                    } else {
+                                        "Hidden behind password · Installed v${BuildConfig.VERSION_NAME}"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = photonColors.photonGlow
+                                    color = if (isApiUnlocked) photonColors.photonGlow else photonColors.goldBadge
                                 )
                             }
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Notify on New GitHub Release",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
-                            )
-                            Text(
-                                text = "Alerts you with the GitHub download link when connected to the internet",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = settings.checkUpdatesOnLaunch,
-                            onCheckedChange = onSetCheckUpdatesOnLaunch,
-                            modifier = Modifier.testTag("github_auto_check_switch"),
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                checkedTrackColor = photonColors.photonGlow
-                            )
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = githubRepoInput,
-                            onValueChange = { githubRepoInput = it },
-                            label = { Text("GitHub Repository (owner/repo)") },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("github_repo_input")
-                        )
-                        OutlinedButton(
-                            onClick = { onSaveGithubRepo(githubRepoInput) },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .height(54.dp)
-                                .testTag("save_github_repo_btn")
-                        ) {
-                            Text("Save")
-                        }
-                    }
-
-                    Button(
-                        onClick = onCheckUpdatesNow,
-                        enabled = !isCheckingUpdate,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(46.dp)
-                            .testTag("check_github_updates_btn"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        if (isCheckingUpdate) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Checking GitHub...")
-                        } else {
-                            Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Check GitHub for Updates Now")
-                        }
-                    }
-
-                    if (!updateCheckStatus.isNullOrBlank()) {
+                    if (!isApiUnlocked) {
                         Text(
-                            text = updateCheckStatus,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = photonColors.photonGlow
+                            text = if (settings.hasApiPassword) {
+                                "API endpoints, repository settings, and web lookup controls are hidden. Enter your password to access them."
+                            } else {
+                                "API endpoints and external lookup controls are hidden by default. Create a local password to unlock API access."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Button(
+                            onClick = onRequestUnlockApi,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("settings_unlock_api_btn"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Rounded.Password, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(if (settings.hasApiPassword) "Enter Password to Unlock API" else "Set Password & Unlock API")
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onLockApi,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .testTag("settings_lock_api_btn"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Rounded.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Lock & Hide")
+                            }
+                            OutlinedButton(
+                                onClick = onRequestChangeApiPassword,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .testTag("settings_change_api_password_btn"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Rounded.Password, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Change Password")
+                            }
+                        }
+
+                        HorizontalDivider(color = photonColors.cardBorder.copy(alpha = 0.5f))
+
+                        // Web Metadata Lookup API Toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = photonColors.photonGlow,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "Auto-Complete Web Metadata API",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                    )
+                                    Text(
+                                        text = "Query web metadata APIs for album art, publisher & release date on import",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = settings.autoEnrichMetadata,
+                                onCheckedChange = onSetAutoEnrichMetadata,
+                                modifier = Modifier.testTag("auto_enrich_switch"),
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                    checkedTrackColor = photonColors.photonGlow
+                                )
+                            )
+                        }
+
+                        HorizontalDivider(color = photonColors.cardBorder.copy(alpha = 0.5f))
+
+                        // GitHub Releases API Section
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Rounded.SystemUpdate, contentDescription = null, tint = photonColors.photonGlow, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "GitHub Releases API",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Notify on New GitHub Release",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                                Text(
+                                    text = "Alerts you with the GitHub download link when connected to the internet",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = settings.checkUpdatesOnLaunch,
+                                onCheckedChange = onSetCheckUpdatesOnLaunch,
+                                modifier = Modifier.testTag("github_auto_check_switch"),
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                    checkedTrackColor = photonColors.photonGlow
+                                )
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = githubRepoInput,
+                                onValueChange = { githubRepoInput = it },
+                                label = { Text("GitHub Repository (owner/repo)") },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("github_repo_input")
+                            )
+                            OutlinedButton(
+                                onClick = { onSaveGithubRepo(githubRepoInput) },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .height(54.dp)
+                                    .testTag("save_github_repo_btn")
+                            ) {
+                                Text("Save")
+                            }
+                        }
+
+                        Button(
+                            onClick = onCheckUpdatesNow,
+                            enabled = !isCheckingUpdate,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("check_github_updates_btn"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (isCheckingUpdate) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Checking GitHub...")
+                            } else {
+                                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Check GitHub for Updates Now")
+                            }
+                        }
+
+                        if (!updateCheckStatus.isNullOrBlank()) {
+                            Text(
+                                text = updateCheckStatus,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = photonColors.photonGlow
+                            )
+                        }
                     }
                 }
             }
@@ -1145,6 +1323,7 @@ private fun SettingsToggleRow(
 @Composable
 private fun CrossfadeVisualCurve(
     crossfadeSeconds: Int,
+    curveShape: CrossfadeCurveShape,
     modifier: Modifier = Modifier
 ) {
     val photonColors = LocalPhotonColors.current
@@ -1158,8 +1337,9 @@ private fun CrossfadeVisualCurve(
         val padY = 6.dp.toPx()
         val topY = padY
         val bottomY = h - padY
+        val usableH = (bottomY - topY).coerceAtLeast(1f)
         val center = w / 2f
-        val halfOverlap = (w * 0.35f) * overlapRatio
+        val halfOverlap = (w * 0.36f) * overlapRatio
 
         val outStart = center - halfOverlap
         val outEnd = center + halfOverlap
@@ -1167,7 +1347,18 @@ private fun CrossfadeVisualCurve(
         val outPath = Path().apply {
             moveTo(0f, topY)
             lineTo(outStart, topY)
-            cubicTo(center, topY, center, bottomY, outEnd, bottomY)
+            if (crossfadeSeconds > 0 && halfOverlap > 1f) {
+                val steps = 28
+                for (i in 1..steps) {
+                    val t = i.toFloat() / steps.toFloat()
+                    val (outG, _) = curveShape.computeGains(t)
+                    val x = outStart + (outEnd - outStart) * t
+                    val y = bottomY - usableH * outG
+                    lineTo(x, y)
+                }
+            } else {
+                lineTo(center, bottomY)
+            }
             lineTo(w, bottomY)
         }
         drawPath(
@@ -1179,7 +1370,18 @@ private fun CrossfadeVisualCurve(
         val inPath = Path().apply {
             moveTo(0f, bottomY)
             lineTo(outStart, bottomY)
-            cubicTo(center, bottomY, center, topY, outEnd, topY)
+            if (crossfadeSeconds > 0 && halfOverlap > 1f) {
+                val steps = 28
+                for (i in 1..steps) {
+                    val t = i.toFloat() / steps.toFloat()
+                    val (_, inG) = curveShape.computeGains(t)
+                    val x = outStart + (outEnd - outStart) * t
+                    val y = bottomY - usableH * inG
+                    lineTo(x, y)
+                }
+            } else {
+                lineTo(center, topY)
+            }
             lineTo(w, topY)
         }
         drawPath(
@@ -1189,7 +1391,12 @@ private fun CrossfadeVisualCurve(
         )
 
         if (crossfadeSeconds > 0) {
-            drawCircle(color = photonColors.goldBadge, radius = 4.dp.toPx(), center = Offset(center, h / 2f))
+            val (midOut, _) = curveShape.computeGains(0.5f)
+            drawCircle(
+                color = photonColors.goldBadge,
+                radius = 4.dp.toPx(),
+                center = Offset(center, bottomY - usableH * midOut)
+            )
         }
     }
 }

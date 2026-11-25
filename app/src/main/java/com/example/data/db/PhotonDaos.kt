@@ -75,6 +75,12 @@ interface TrackDao {
         replaceArtwork: Boolean = false
     )
 
+    @Query("UPDATE tracks SET isFavorite = :isFavorite WHERE id = :trackId")
+    suspend fun setFavorite(trackId: Long, isFavorite: Boolean)
+
+    @Query("UPDATE tracks SET customGainDb = :customGainDb, preferredEqPreset = :preferredEqPreset WHERE id = :trackId")
+    suspend fun updateTrackSoundProfile(trackId: Long, customGainDb: Float, preferredEqPreset: String?)
+
     @Query("DELETE FROM tracks WHERE id = :trackId")
     suspend fun deleteTrack(trackId: Long)
 
@@ -184,6 +190,17 @@ interface ListeningHistoryDao {
         """
     )
     fun observeGenrePlayStats(): Flow<List<GenrePlayStat>>
+
+    @Query(
+        """
+        SELECT artist, COUNT(*) AS playCount
+        FROM listening_history
+        WHERE artist != '' AND artist != 'Unknown Artist'
+        GROUP BY artist
+        ORDER BY playCount DESC
+        """
+    )
+    fun observeArtistPlayStats(): Flow<List<ArtistPlayStat>>
 
     @Query("SELECT COUNT(*) FROM listening_history")
     fun observeTotalPlayCount(): Flow<Int>

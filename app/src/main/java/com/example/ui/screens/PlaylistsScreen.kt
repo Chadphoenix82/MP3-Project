@@ -272,7 +272,7 @@ private fun PlaylistsOverview(
                                     text = playlist.description,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -381,6 +381,15 @@ private fun PlaylistDetailView(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            if (playlist.description.isNotBlank()) {
+                                Text(
+                                    text = playlist.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                             Text(
                                 text = "${tracks.size} track${if (tracks.size == 1) "" else "s"}",
                                 style = MaterialTheme.typography.labelMedium,
@@ -470,7 +479,7 @@ private fun PlaylistDetailView(
                             ) {
                                 Text("This playlist is empty", style = MaterialTheme.typography.titleSmall)
                                 Text(
-                                    "Tap Add to include MP3, FLAC, or WAV tracks from your library.",
+                                    "Tap Add to include songs from your music library.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -504,6 +513,7 @@ private fun PlaylistEditorDialog(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Playlist Name") },
+                    placeholder = { Text("e.g., Late Night Synthwave") },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -512,9 +522,13 @@ private fun PlaylistEditorDialog(
                 OutlinedTextField(
                     value = desc,
                     onValueChange = { desc = it },
-                    label = { Text("Description (optional)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text("Playlist Description") },
+                    placeholder = { Text("Describe the mood, genre, or vibe...") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("playlist_description_input")
                 )
             }
         },

@@ -5,30 +5,37 @@ import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
+import com.example.data.model.PhotonEqPresets
+import com.example.data.model.StudioDspConfig
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.ln
 import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.tanh
 
 data class AudioSpectrumFrame(
     val bars: List<Float> = List(28) { 0f },
-    val eqBandLevels: List<Float> = List(5) { 0f },
+    val eqBandLevels: List<Float> = List(10) { 0f },
     val eqCurvePoints: List<Float> = List(28) { 0.5f },
-    val bandFrequenciesHz: List<Int> = listOf(60, 230, 910, 3600, 14000),
+    val bandFrequenciesHz: List<Int> = PhotonEqPresets.canonical10BandFrequenciesHz,
     val bassEnergy: Float = 0f,
     val peakLevel: Float = 0f,
     val isLiveAudio: Boolean = false
 )
 
 /**
- * Zero-permission Media3 ExoPlayer AudioProcessor that taps real-time decoded PCM audio samples
- * (MP3, FLAC, WAV), runs a 512-point Hann-windowed Radix-2 FFT, and shapes the live frequency
- * spectrum using the active Equalizer band frequencies, gains, and bass boost curve.
+ * Zero-permission Media3 ExoPlayer AudioProcessor that performs:
+ * 1) Real-time PCM Studio Mastering DSP (Pre-Amp + Per-Track Gain Trim, Adaptive RMS Loudness
+ *    Normalizer, Bauer Headphone Crossfeed, Stereo L/R Balance & Mono Downmix, and tanh Soft-Clip Limiter).
+ * 2) 512-point Hann-windowed Radix-2 FFT computing a 28-bar live spectrum and 10-band ISO EQ meters.
+ *
+ * When all PCM DSP modifiers are neutral/off, runs as an exact zero-latency pass-through.
  */
 @OptIn(UnstableApi::class)
 class PhotonSpectrumAudioProcessor(
@@ -40,13 +47,22 @@ class PhotonSpectrumAudioProcessor(
     companion object {
         private const val FFT_SIZE = 512
         private const val BAR_COUNT = 28
+        private const val EQ_BANDS = 10
         private const val MIN_EMIT_INTERVAL_MS = 33L
+        private const val TARGET_RMS = 0.21f
     }
 
     @Volatile private var eqEnabled: Boolean = true
-    @Volatile private var eqRatios: FloatArray = floatArrayOf(0.55f, 0.22f, -0.05f, 0.38f, 0.62f)
-    @Volatile private var eqFreqsHz: IntArray = intArrayOf(60, 230, 910, 3600, 14000)
+    @Volatile private var eqRatios: FloatArray = PhotonEqPresets.default10BandRatios.toFloatArray()
+    @Volatile private var eqFreqsHz: IntArray = PhotonEqPresets.canonical10BandFrequenciesHz.toIntArray()
     @Volatile private var bassBoostStrength: Int = 380
+    @Volatile private var studioDsp: StudioDspConfig = StudioDspConfig()
+
+    // Real-time DSP filter states
+    private var agcGain: Float = 1f
+    private var smoothedRms: Float = 0.16f
+    private var crossfeedLpLeft: Float = 0f
+    private var crossfeedLpRight: Float = 0f
 
     private val ringBuffer = FloatArray(FFT_SIZE)
     private var ringWritePos = 0
@@ -59,11 +75,11 @@ class PhotonSpectrumAudioProcessor(
     private val fftReal = FloatArray(FFT_SIZE)
     private val fftImag = FloatArray(FFT_SIZE)
     private val smoothedBars = FloatArray(BAR_COUNT)
-    private val smoothedEqBands = FloatArray(5)
+    private val smoothedEqBands = FloatArray(EQ_BANDS)
 
-    // Precomputed logarithmic frequency edges for 28 studio spectrum bars (40Hz -> 16kHz)
+    // Precomputed logarithmic frequency edges for 28 studio spectrum bars (31Hz -> 16kHz)
     private val barEdgeFreqsHz = FloatArray(BAR_COUNT + 1) { i ->
-        val minF = 40.0
+        val minF = 31.0
         val maxF = 16000.0
         (minF * (maxF / minF).pow(i.toDouble() / BAR_COUNT.toDouble())).toFloat()
     }
@@ -75,13 +91,16 @@ class PhotonSpectrumAudioProcessor(
         bassStrength: Int
     ) {
         eqEnabled = enabled
-        if (ratios.size == 5) {
-            eqRatios = FloatArray(5) { idx -> ratios[idx].coerceIn(-1f, 1f) }
-        }
-        if (frequenciesHz.size == 5) {
-            eqFreqsHz = IntArray(5) { idx -> frequenciesHz[idx].coerceAtLeast(30) }
+        val norm = PhotonEqPresets.normalizeTo10Bands(ratios)
+        eqRatios = FloatArray(EQ_BANDS) { idx -> norm[idx] }
+        if (frequenciesHz.size == EQ_BANDS) {
+            eqFreqsHz = IntArray(EQ_BANDS) { idx -> frequenciesHz[idx].coerceAtLeast(25) }
         }
         bassBoostStrength = bassStrength.coerceIn(0, 1000)
+    }
+
+    fun updateStudioDsp(config: StudioDspConfig) {
+        studioDsp = config
     }
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
@@ -107,31 +126,185 @@ class PhotonSpectrumAudioProcessor(
         val remaining = inputBuffer.remaining()
         if (remaining <= 0) return
 
-        // Inspect PCM samples without consuming or altering the audio stream
+        val dsp = studioDsp
+        val totalGainDb = (dsp.preAmpDb + dsp.trackGainOffsetDb).coerceIn(-18f, 18f)
+        val needsPcmDsp = abs(totalGainDb) > 0.05f ||
+            dsp.loudnessNormalizerEnabled ||
+            dsp.monoAudioEnabled ||
+            abs(dsp.stereoBalance) > 0.01f ||
+            dsp.crossfeedStrength > 0.01f ||
+            (dsp.softLimiterEnabled && totalGainDb > 0.1f)
+
+        val output = replaceOutputBuffer(remaining)
+
+        if (!needsPcmDsp) {
+            if (isActivePlayer()) {
+                val dup = inputBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+                ingestPcm(dup, inputAudioFormat)
+            }
+            output.put(inputBuffer)
+            output.flip()
+        } else {
+            processPcmBlock(inputBuffer, output, inputAudioFormat, dsp, totalGainDb)
+            output.flip()
+        }
+
         if (isActivePlayer()) {
-            val dup = inputBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-            ingestPcm(dup, inputAudioFormat)
             val now = System.currentTimeMillis()
             if (ringFilled >= FFT_SIZE && now - lastEmitMs >= MIN_EMIT_INTERVAL_MS) {
                 lastEmitMs = now
                 computeAndEmitSpectrum(inputAudioFormat.sampleRate)
             }
         }
+    }
 
-        // Exact zero-latency pass-through to output buffer
-        val output = replaceOutputBuffer(remaining)
-        output.put(inputBuffer)
-        output.flip()
+    private fun processPcmBlock(
+        input: ByteBuffer,
+        output: ByteBuffer,
+        format: AudioProcessor.AudioFormat,
+        dsp: StudioDspConfig,
+        totalGainDb: Float
+    ) {
+        val channels = format.channelCount.coerceAtLeast(1)
+        val sampleRate = format.sampleRate.coerceAtLeast(8000).toFloat()
+        val baseGain = 10.0.pow(totalGainDb / 20.0).toFloat()
+
+        // Stereo L/R constant-power balance attenuation
+        val bal = dsp.stereoBalance.coerceIn(-1f, 1f)
+        val leftBalGain = if (bal > 0f) (1f - bal).coerceIn(0f, 1f) else 1f
+        val rightBalGain = if (bal < 0f) (1f + bal).coerceIn(0f, 1f) else 1f
+
+        // Bauer crossfeed 1-pole low-pass coefficient (~700Hz acoustic head-shadow filter)
+        val cf = dsp.crossfeedStrength.coerceIn(0f, 1f)
+        val rc = 1f / (2f * PI.toFloat() * 700f)
+        val dt = 1f / sampleRate
+        val lpAlpha = (dt / (rc + dt)).coerceIn(0.01f, 0.5f)
+        val directMix = 1f - cf * 0.24f
+        val crossMix = cf * 0.30f
+
+        val captureSpectrum = isActivePlayer()
+        val is16Bit = format.encoding == C.ENCODING_PCM_16BIT
+        val bytesPerSample = if (is16Bit) 2 else 4
+        val frameBytes = channels * bytesPerSample
+        val totalFrames = input.remaining() / frameBytes
+        val spectrumStartFrame = (totalFrames - FFT_SIZE).coerceAtLeast(0)
+
+        var sumSquares = 0.0
+        var sampleCount = 0
+
+        val currentAgc = if (dsp.loudnessNormalizerEnabled) agcGain else 1f
+        val combinedGain = baseGain * currentAgc
+
+        for (f in 0 until totalFrames) {
+            if (channels == 2) {
+                var l = readSample(input, is16Bit)
+                var r = readSample(input, is16Bit)
+
+                if (dsp.loudnessNormalizerEnabled) {
+                    val m = (l + r) * 0.5f
+                    sumSquares += (m * m).toDouble()
+                    sampleCount++
+                }
+
+                l *= combinedGain
+                r *= combinedGain
+
+                if (dsp.monoAudioEnabled) {
+                    val mono = (l + r) * 0.5f
+                    l = mono
+                    r = mono
+                } else {
+                    if (cf > 0.01f) {
+                        crossfeedLpLeft += lpAlpha * (l - crossfeedLpLeft)
+                        crossfeedLpRight += lpAlpha * (r - crossfeedLpRight)
+                        val newL = l * directMix + crossfeedLpRight * crossMix
+                        val newR = r * directMix + crossfeedLpLeft * crossMix
+                        l = newL
+                        r = newR
+                    }
+                    l *= leftBalGain
+                    r *= rightBalGain
+                }
+
+                l = applySoftLimiter(l, dsp.softLimiterEnabled)
+                r = applySoftLimiter(r, dsp.softLimiterEnabled)
+
+                writeSample(output, l, is16Bit)
+                writeSample(output, r, is16Bit)
+
+                if (captureSpectrum && f >= spectrumStartFrame) {
+                    pushSample((l + r) * 0.5f)
+                }
+            } else {
+                var monoSum = 0f
+                for (c in 0 until channels) {
+                    var s = readSample(input, is16Bit)
+                    if (dsp.loudnessNormalizerEnabled) {
+                        sumSquares += (s * s).toDouble()
+                        sampleCount++
+                    }
+                    s = applySoftLimiter(s * combinedGain, dsp.softLimiterEnabled)
+                    writeSample(output, s, is16Bit)
+                    monoSum += s
+                }
+                if (captureSpectrum && f >= spectrumStartFrame) {
+                    pushSample(monoSum / channels)
+                }
+            }
+        }
+
+        // Update adaptive RMS Loudness Normalizer envelope smoothly between audio blocks
+        if (dsp.loudnessNormalizerEnabled && sampleCount > 0) {
+            val blockRms = sqrt(sumSquares / sampleCount).toFloat()
+            if (blockRms > 0.008f) {
+                smoothedRms = smoothedRms * 0.85f + blockRms * 0.15f
+                val targetGain = (TARGET_RMS / smoothedRms.coerceAtLeast(0.035f)).coerceIn(0.55f, 2.25f)
+                val adaptAlpha = if (targetGain < agcGain) 0.22f else 0.06f
+                agcGain = (agcGain + (targetGain - agcGain) * adaptAlpha).coerceIn(0.55f, 2.25f)
+            }
+        } else {
+            agcGain = 1f
+        }
+    }
+
+    private fun readSample(buf: ByteBuffer, is16Bit: Boolean): Float {
+        return if (is16Bit) buf.short / 32768f else buf.float
+    }
+
+    private fun writeSample(buf: ByteBuffer, sample: Float, is16Bit: Boolean) {
+        val clamped = sample.coerceIn(-1f, 1f)
+        if (is16Bit) {
+            val s16 = (clamped * 32767f).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+            buf.putShort(s16)
+        } else {
+            buf.putFloat(clamped)
+        }
+    }
+
+    private fun applySoftLimiter(sample: Float, enabled: Boolean): Float {
+        if (!enabled) return sample.coerceIn(-1f, 1f)
+        val absVal = abs(sample)
+        if (absVal <= 0.78f) return sample
+        val sign = if (sample >= 0f) 1f else -1f
+        val excess = (absVal - 0.78f) / 0.22f
+        val limited = 0.78f + 0.205f * tanh(excess.toDouble()).toFloat()
+        return sign * limited.coerceAtMost(0.985f)
     }
 
     override fun onFlush() {
         ringWritePos = 0
         ringFilled = 0
+        crossfeedLpLeft = 0f
+        crossfeedLpRight = 0f
     }
 
     override fun onReset() {
         ringWritePos = 0
         ringFilled = 0
+        agcGain = 1f
+        smoothedRms = 0.16f
+        crossfeedLpLeft = 0f
+        crossfeedLpRight = 0f
         smoothedBars.fill(0f)
         smoothedEqBands.fill(0f)
     }
@@ -142,7 +315,6 @@ class PhotonSpectrumAudioProcessor(
             C.ENCODING_PCM_16BIT -> {
                 val frameBytes = channels * 2
                 val totalFrames = buf.remaining() / frameBytes
-                // Downsample stride when buffers are very large so we always capture the freshest tail
                 val skipFrames = (totalFrames - FFT_SIZE).coerceAtLeast(0)
                 if (skipFrames > 0) {
                     buf.position(buf.position() + skipFrames * frameBytes)
@@ -182,7 +354,6 @@ class PhotonSpectrumAudioProcessor(
     }
 
     private fun computeAndEmitSpectrum(sampleRateHz: Int) {
-        // Copy chronologically ordered Hann-windowed samples into FFT buffers
         for (i in 0 until FFT_SIZE) {
             val idx = (ringWritePos + i) % FFT_SIZE
             fftReal[i] = ringBuffer[idx] * hannWindow[i]
@@ -197,7 +368,6 @@ class PhotonSpectrumAudioProcessor(
         for (k in 0 until nyquistBins) {
             val re = fftReal[k]
             val im = fftImag[k]
-            // Normalize magnitude & apply gentle perceptual log compression
             val mag = sqrt(re * re + im * im) / (FFT_SIZE / 4f)
             val dbNorm = (log10(1f + mag * 18f) / log10(19f)).coerceIn(0f, 1f)
             magnitudes[k] = dbNorm
@@ -208,7 +378,6 @@ class PhotonSpectrumAudioProcessor(
         val activeEq = eqEnabled
         val bassBoostNorm = if (activeEq) bassBoostStrength / 1000f else 0f
 
-        // Compute 28 logarithmic bars shaped by the Equalizer frequency response curve
         val curvePoints = FloatArray(BAR_COUNT)
         var maxPeak = 0f
 
@@ -228,7 +397,6 @@ class PhotonSpectrumAudioProcessor(
             }
             val rawLevel = if (count > 0) energy / count else 0f
 
-            // Interpolate Equalizer gain at this bar's center frequency
             val eqRatio = if (activeEq) {
                 interpolateEqRatioAtFreq(fCenter, currentEqFreqs, currentEqRatios)
             } else {
@@ -238,7 +406,6 @@ class PhotonSpectrumAudioProcessor(
             val gainMultiplier = (1f + eqRatio * 0.55f + subBassExtra).coerceIn(0.32f, 1.75f)
             val shaped = (rawLevel * gainMultiplier).coerceIn(0f, 1f)
 
-            // Smooth attack / decay
             val prev = smoothedBars[b]
             val alpha = if (shaped > prev) 0.62f else 0.24f
             val next = (prev + (shaped - prev) * alpha).coerceIn(0f, 1f)
@@ -248,11 +415,15 @@ class PhotonSpectrumAudioProcessor(
             curvePoints[b] = ((eqRatio + 1f) * 0.5f).coerceIn(0.05f, 0.95f)
         }
 
-        // Compute exact 5-band Equalizer live meters synced to the 5 EQ center frequencies
-        for (band in 0 until 5) {
+        // Compute exact 10-band Equalizer live meters synced to the 10 ISO center frequencies
+        for (band in 0 until EQ_BANDS) {
             val centerHz = currentEqFreqs[band].toFloat()
-            val lowHz = if (band == 0) 25f else sqrt(currentEqFreqs[band - 1].toFloat() * centerHz)
-            val highHz = if (band == 4) (sampleRateHz / 2f).coerceAtMost(18000f) else sqrt(centerHz * currentEqFreqs[band + 1].toFloat())
+            val lowHz = if (band == 0) 20f else sqrt(currentEqFreqs[band - 1].toFloat() * centerHz)
+            val highHz = if (band == EQ_BANDS - 1) {
+                (sampleRateHz / 2f).coerceAtMost(20000f)
+            } else {
+                sqrt(centerHz * currentEqFreqs[band + 1].toFloat())
+            }
 
             val startBin = (lowHz / binHz).toInt().coerceIn(1, nyquistBins - 1)
             val endBin = (highHz / binHz).toInt().coerceIn(startBin, nyquistBins - 1)
@@ -264,7 +435,7 @@ class PhotonSpectrumAudioProcessor(
             }
             val rawBand = if (cnt > 0) sum / cnt else 0f
             val ratio = if (activeEq) currentEqRatios[band] else 0f
-            val bassBonus = if (band == 0) bassBoostNorm * 0.30f else 0f
+            val bassBonus = if (band <= 1) bassBoostNorm * 0.28f else 0f
             val shapedBand = (rawBand * (1f + ratio * 0.55f + bassBonus).coerceIn(0.35f, 1.75f)).coerceIn(0f, 1f)
 
             val prev = smoothedEqBands[band]
@@ -288,10 +459,12 @@ class PhotonSpectrumAudioProcessor(
     }
 
     private fun interpolateEqRatioAtFreq(freqHz: Float, freqs: IntArray, ratios: FloatArray): Float {
+        val last = minOf(freqs.lastIndex, ratios.lastIndex)
+        if (last <= 0) return ratios.firstOrNull() ?: 0f
         if (freqHz <= freqs[0]) return ratios[0]
-        if (freqHz >= freqs[4]) return ratios[4]
+        if (freqHz >= freqs[last]) return ratios[last]
         val logF = ln(freqHz.toDouble())
-        for (i in 0 until 4) {
+        for (i in 0 until last) {
             if (freqHz <= freqs[i + 1]) {
                 val logLow = ln(freqs[i].toDouble())
                 val logHigh = ln(freqs[i + 1].toDouble())
@@ -299,12 +472,9 @@ class PhotonSpectrumAudioProcessor(
                 return ratios[i] + (ratios[i + 1] - ratios[i]) * t
             }
         }
-        return ratios[4]
+        return ratios[last]
     }
 
-    /**
-     * Standard in-place iterative Radix-2 Cooley-Tukey FFT.
-     */
     private fun fftInPlace(real: FloatArray, imag: FloatArray) {
         val n = real.size
         var j = 0

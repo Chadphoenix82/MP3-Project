@@ -7,6 +7,10 @@ import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.data.db.TrackEntity
+import com.example.data.model.CrossfadeCurveShape
+import com.example.data.model.PhotonEqPresets
+import com.example.data.model.StudioDspConfig
+import com.example.widget.PhotonWidgetUpdater
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
@@ -30,14 +34,17 @@ class PhotonPlayerController(private val context: Context) {
 
     // Cached configuration synced automatically when the service starts
     private var cachedCrossfadeSeconds: Int = 4
+    private var cachedCrossfadeCurve: CrossfadeCurveShape = CrossfadeCurveShape.EQUAL_POWER
     private var cachedPlaybackSpeed: Float = 1.0f
+    private var cachedPlaybackPitch: Float = 1.0f
     private var cachedSkipSilence: Boolean = false
     private var cachedPauseOnDisconnect: Boolean = true
     private var cachedHandleAudioFocus: Boolean = true
     private var cachedEqEnabled: Boolean = true
-    private var cachedEqRatios: List<Float> = listOf(0.55f, 0.22f, -0.05f, 0.38f, 0.62f)
+    private var cachedEqRatios: List<Float> = PhotonEqPresets.default10BandRatios
     private var cachedBassStrength: Int = 380
     private var cachedVirtualizerStrength: Int = 320
+    private var cachedStudioDsp: StudioDspConfig = StudioDspConfig()
 
     fun connect() {
         if (controllerFuture != null) return
@@ -62,8 +69,10 @@ class PhotonPlayerController(private val context: Context) {
 
     private fun applyCachedConfig(service: PhotonPlaybackService) {
         service.setCrossfadeSeconds(cachedCrossfadeSeconds)
+        service.setCrossfadeCurve(cachedCrossfadeCurve)
         service.updatePlaybackOptions(
             speed = cachedPlaybackSpeed,
+            pitch = cachedPlaybackPitch,
             skipSilence = cachedSkipSilence,
             pauseOnDisconnect = cachedPauseOnDisconnect,
             audioFocus = cachedHandleAudioFocus
@@ -74,6 +83,7 @@ class PhotonPlayerController(private val context: Context) {
             bass = cachedBassStrength,
             virtualizer = cachedVirtualizerStrength
         )
+        service.updateStudioDsp(cachedStudioDsp)
     }
 
     private fun withService(block: (PhotonPlaybackService) -> Unit) {
@@ -120,18 +130,26 @@ class PhotonPlayerController(private val context: Context) {
         PhotonPlaybackBridge.serviceInstance?.setCrossfadeSeconds(cachedCrossfadeSeconds)
     }
 
+    fun setCrossfadeCurve(curve: CrossfadeCurveShape) {
+        cachedCrossfadeCurve = curve
+        PhotonPlaybackBridge.serviceInstance?.setCrossfadeCurve(curve)
+    }
+
     fun updatePlaybackOptions(
         speed: Float,
+        pitch: Float = cachedPlaybackPitch,
         skipSilence: Boolean,
         pauseOnDisconnect: Boolean,
         audioFocus: Boolean
     ) {
         cachedPlaybackSpeed = speed.coerceIn(0.5f, 2.0f)
+        cachedPlaybackPitch = pitch.coerceIn(0.5f, 1.5f)
         cachedSkipSilence = skipSilence
         cachedPauseOnDisconnect = pauseOnDisconnect
         cachedHandleAudioFocus = audioFocus
         PhotonPlaybackBridge.serviceInstance?.updatePlaybackOptions(
             speed = cachedPlaybackSpeed,
+            pitch = cachedPlaybackPitch,
             skipSilence = cachedSkipSilence,
             pauseOnDisconnect = cachedPauseOnDisconnect,
             audioFocus = cachedHandleAudioFocus
@@ -140,7 +158,7 @@ class PhotonPlayerController(private val context: Context) {
 
     fun updateEqualizer(enabled: Boolean, ratios: List<Float>, bass: Int, virtualizer: Int) {
         cachedEqEnabled = enabled
-        if (ratios.size == 5) cachedEqRatios = ratios
+        cachedEqRatios = PhotonEqPresets.normalizeTo10Bands(ratios)
         cachedBassStrength = bass.coerceIn(0, 1000)
         cachedVirtualizerStrength = virtualizer.coerceIn(0, 1000)
         PhotonPlaybackBridge.serviceInstance?.updateEqualizer(
@@ -149,6 +167,15 @@ class PhotonPlayerController(private val context: Context) {
             bass = cachedBassStrength,
             virtualizer = cachedVirtualizerStrength
         )
+    }
+
+    fun updateStudioDsp(config: StudioDspConfig) {
+        cachedStudioDsp = config
+        PhotonPlaybackBridge.serviceInstance?.updateStudioDsp(config)
+    }
+
+    fun refreshWidgets() {
+        PhotonWidgetUpdater.requestUpdate(context)
     }
 
     fun updateTrackInQueue(track: TrackEntity) {
@@ -169,6 +196,26 @@ class PhotonPlayerController(private val context: Context) {
 
     fun jumpToQueueIndex(index: Int) {
         withService { it.jumpToQueueIndex(index) }
+    }
+
+    fun removeFromQueue(index: Int) {
+        PhotonPlaybackBridge.serviceInstance?.removeFromQueue(index)
+    }
+
+    fun clearUpcomingQueue() {
+        PhotonPlaybackBridge.serviceInstance?.clearUpcomingQueue()
+    }
+
+    fun setAbLoopStart() {
+        PhotonPlaybackBridge.serviceInstance?.setAbLoopStart()
+    }
+
+    fun setAbLoopEnd() {
+        PhotonPlaybackBridge.serviceInstance?.setAbLoopEnd()
+    }
+
+    fun clearAbLoop() {
+        PhotonPlaybackBridge.serviceInstance?.clearAbLoop()
     }
 
     fun startSleepTimerMinutes(minutes: Int) {
