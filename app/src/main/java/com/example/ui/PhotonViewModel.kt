@@ -1,0 +1,932 @@
+package com.example.ui
+
+import android.net.Uri
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.example.data.db.ExcludedFolderEntity
+import com.example.data.db.PlaylistWithSummary
+import com.example.data.db.TrackEntity
+import com.example.data.db.WatchedFolderEntity
+import com.example.data.library.FolderMonitorStatus
+import com.example.data.library.LibraryRepository
+import com.example.data.library.SmartQueueEngine
+import com.example.data.library.SmartQueueSuggestion
+import com.example.data.model.EqualizerPreset
+import com.example.data.model.MetadataSuggestion
+import com.example.data.model.SortDirection
+import com.example.data.model.SortOption
+import com.example.data.network.AppUpdateInfo
+import com.example.data.network.GitHubUpdateChecker
+import com.example.data.network.MetadataAutoCompleteRepository
+import com.example.data.network.UpdateCheckOutcome
+import com.example.data.prefs.AppSettings
+import com.example.data.prefs.SettingsRepository
+import com.example.player.PhotonPlayerController
+import com.example.player.PlaybackUiState
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+data class MetadataSearchUiState(
+    val targetTrack: TrackEntity? = null,
+    val query: String = "",
+    val isLoading: Boolean = false,
+    val results: List<MetadataSuggestion> = emptyList(),
+    val errorMessage: String? = null
+)
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class PhotonViewModel(
+    private val libraryRepository: LibraryRepository,
+    private val settingsRepository: SettingsRepository,
+    val playerController: PhotonPlayerController,
+    private val gitHubUpdateChecker: GitHubUpdateChecker
+) : ViewModel() {
+
+    val settings: StateFlow<AppSettings> = settingsRepository.settingsFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = AppSettings()
+    )
+
+    val playbackState: StateFlow<PlaybackUiState> = playerController.playbackState
+    val spectrumState: StateFlow<com.example.player.AudioSpectrumFrame> = playerController.spectrumState
+    val monitorStatus: StateFlow<FolderMonitorStatus> = libraryRepository.monitorStatus
+
+    val watchedFolders: StateFlow<List<WatchedFolderEntity>> = libraryRepository.watchedFolders.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val excludedFolders: StateFlow<List<ExcludedFolderEntity>> = libraryRepository.excludedFolders.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val playlists: StateFlow<List<PlaylistWithSummary>> = libraryRepository.playlists.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val totalPlayCount: StateFlow<Int> = libraryRepository.totalPlayCount.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = 0
+    )
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _formatFilter = MutableStateFlow<String?>(null)
+    val formatFilter: StateFlow<String?> = _formatFilter.asStateFlow()
+
+    val allTracks: StateFlow<List<TrackEntity>> = libraryRepository.allTracks.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val filteredSortedTracks: StateFlow<List<TrackEntity>> = combine(
+        allTracks,
+        settings,
+        _searchQuery,
+        _formatFilter
+    ) { tracks, appSettings, query, format ->
+        val trimmed = query.trim().lowercase()
+        val filtered = tracks.filter { track ->
+            val matchesFormat = format == null || track.format.equals(format, ignoreCase = true)
+            val matchesQuery = trimmed.isEmpty() ||
+                track.title.lowercase().contains(trimmed) ||
+                track.artist.lowercase().contains(trimmed) ||
+                track.album.lowercase().contains(trimmed) ||
+                track.genre.lowercase().contains(trimmed) ||
+                track.publisher.lowercase().contains(trimmed) ||
+                (track.releaseYear?.toString()?.contains(trimmed) == true)
+            matchesFormat && matchesQuery
+        }
+        sortTracks(filtered, appSettings.sortOption, appSettings.sortDirection)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    // Smart Queue reactive engine powered by Room listening history + current track genre
+    val smartQueueSuggestions: StateFlow<List<SmartQueueSuggestion>> = combine(
+        allTracks,
+        playbackState,
+        libraryRepository.recentHistory,
+        libraryRepository.trackPlayStats,
+        libraryRepository.genrePlayStats
+    ) { tracks, playback, history, trackStats, genreStats ->
+        val upcomingIds = if (playback.currentIndex >= 0 && playback.currentIndex < playback.queue.lastIndex) {
+            playback.queue.drop(playback.currentIndex + 1).map { it.id }.toSet()
+        } else {
+            emptySet()
+        }
+        SmartQueueEngine.buildSuggestions(
+            allTracks = tracks,
+            currentTrack = playback.currentTrack,
+            upcomingQueueTrackIds = upcomingIds,
+            recentHistory = history,
+            trackStats = trackStats,
+            genreStats = genreStats
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    private val _selectedPlaylistId = MutableStateFlow<Long?>(null)
+    val selectedPlaylistId: StateFlow<Long?> = _selectedPlaylistId.asStateFlow()
+
+    val selectedPlaylistTracks: StateFlow<List<TrackEntity>> = _selectedPlaylistId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(emptyList()) else libraryRepository.observePlaylistTracks(id)
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    private val _metadataUiState = MutableStateFlow(MetadataSearchUiState())
+    val metadataUiState: StateFlow<MetadataSearchUiState> = _metadataUiState.asStateFlow()
+
+    // Dedicated Metadata Editor screen state
+    private val _editorSelectedTrackId = MutableStateFlow<Long?>(null)
+    val editorSelectedTrackId: StateFlow<Long?> = _editorSelectedTrackId.asStateFlow()
+
+    private val _editorSearchState = MutableStateFlow(MetadataSearchUiState())
+    val editorSearchState: StateFlow<MetadataSearchUiState> = _editorSearchState.asStateFlow()
+
+    // Privacy-first GitHub Update Checker state
+    private val _availableUpdate = MutableStateFlow<AppUpdateInfo?>(null)
+    val availableUpdate: StateFlow<AppUpdateInfo?> = _availableUpdate.asStateFlow()
+
+    private val _isCheckingUpdate = MutableStateFlow(false)
+    val isCheckingUpdate: StateFlow<Boolean> = _isCheckingUpdate.asStateFlow()
+
+    private val _updateCheckStatus = MutableStateFlow<String?>(null)
+    val updateCheckStatus: StateFlow<String?> = _updateCheckStatus.asStateFlow()
+
+    private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
+
+    private var lastLoggedTrackKey: String? = null
+    private var lastAutoAppendedForTrackId: Long? = null
+
+    init {
+        // Keep PlaybackService synced with DataStore playback, crossfade & equalizer settings
+        viewModelScope.launch {
+            settings.collect { appSettings ->
+                playerController.setCrossfadeSeconds(appSettings.crossfadeSeconds)
+                playerController.updatePlaybackOptions(
+                    speed = appSettings.playbackSpeed,
+                    skipSilence = appSettings.skipSilenceEnabled,
+                    pauseOnDisconnect = appSettings.pauseOnAudioDisconnect,
+                    audioFocus = appSettings.handleAudioFocus
+                )
+                playerController.updateEqualizer(
+                    enabled = appSettings.eqEnabled,
+                    ratios = appSettings.eqBandRatios,
+                    bass = appSettings.bassBoostStrength,
+                    virtualizer = appSettings.virtualizerStrength
+                )
+            }
+        }
+
+        // Check GitHub Releases once on startup if online and user enabled auto-check
+        viewModelScope.launch {
+            val initialSettings = settingsRepository.settingsFlow.first()
+            if (initialSettings.checkUpdatesOnLaunch && gitHubUpdateChecker.isOnline()) {
+                checkForGitHubUpdates(manual = false)
+            }
+        }
+
+        // Keep active playback track metadata refreshed when Room updates tracks
+        viewModelScope.launch {
+            allTracks.collect { tracks ->
+                val currentId = playbackState.value.currentTrack?.id ?: return@collect
+                tracks.firstOrNull { it.id == currentId }?.let { updated ->
+                    playerController.updateTrackInQueue(updated)
+                }
+            }
+        }
+
+        // Record listening history in Room whenever a track starts playing + auto-queue next track
+        viewModelScope.launch {
+            playbackState.collect { pb ->
+                val current = pb.currentTrack
+                if (current != null && pb.isPlaying) {
+                    val key = "${current.id}:${pb.currentIndex}"
+                    if (key != lastLoggedTrackKey) {
+                        lastLoggedTrackKey = key
+                        libraryRepository.recordTrackPlayed(current)
+                    }
+
+                    // Auto-append top Smart Queue suggestion when reaching the end of the current queue
+                    if (
+                        settings.value.smartQueueAutoPlay &&
+                        pb.queue.isNotEmpty() &&
+                        pb.currentIndex == pb.queue.lastIndex &&
+                        lastAutoAppendedForTrackId != current.id
+                    ) {
+                        val nextPick = smartQueueSuggestions.value
+                            .firstOrNull { it.track.id != current.id }
+                        if (nextPick != null) {
+                            lastAutoAppendedForTrackId = current.id
+                            playerController.appendToQueue(listOf(nextPick.track))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Smart Queue Controls ----
+
+    fun playNextFromSmartQueue(track: TrackEntity) {
+        playerController.enqueueNext(track)
+        _snackbarMessages.tryEmit("Queued next: \"${track.title}\"")
+    }
+
+    fun addSuggestionToQueue(track: TrackEntity) {
+        playerController.appendToQueue(listOf(track))
+        _snackbarMessages.tryEmit("Added \"${track.title}\" to queue")
+    }
+
+    fun queueAllSmartSuggestions() {
+        val tracks = smartQueueSuggestions.value.map { it.track }
+        if (tracks.isEmpty()) return
+        playerController.appendToQueue(tracks)
+        _snackbarMessages.tryEmit("Added ${tracks.size} Smart Queue track(s)")
+    }
+
+    fun jumpToQueueIndex(index: Int) {
+        playerController.jumpToQueueIndex(index)
+    }
+
+    fun setSmartQueueAutoPlay(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setSmartQueueAutoPlay(enabled)
+        }
+    }
+
+    fun clearListeningHistory() {
+        viewModelScope.launch {
+            libraryRepository.clearListeningHistory()
+            lastLoggedTrackKey = null
+            _snackbarMessages.tryEmit("Cleared Room listening history")
+        }
+    }
+
+    // ---- Search, Filter & Sort ----
+
+    fun updateSearchQuery(query: String) {
+        _searchQuery.value = query
+    }
+
+    fun setFormatFilter(format: String?) {
+        _formatFilter.value = if (_formatFilter.value == format) null else format
+    }
+
+    fun selectSortOption(option: SortOption) {
+        viewModelScope.launch {
+            val current = settings.value
+            val newDir = if (current.sortOption == option && option != SortOption.CUSTOM_ORDER) {
+                if (current.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
+            } else {
+                if (option == SortOption.RELEASE_YEAR || option == SortOption.DATE_ADDED) {
+                    SortDirection.DESC
+                } else {
+                    SortDirection.ASC
+                }
+            }
+            settingsRepository.setSort(option, newDir)
+        }
+    }
+
+    fun toggleSortDirection() {
+        viewModelScope.launch {
+            val current = settings.value
+            val toggled = if (current.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
+            settingsRepository.setSort(current.sortOption, toggled)
+        }
+    }
+
+    // ---- Audio Import, Auto-Scan & Exclusions ----
+
+    fun importAudioFiles(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val result = libraryRepository.importPickedFiles(uris)
+            val msg = when {
+                result.importedCount > 0 && result.skippedByExclusionCount > 0 ->
+                    "Imported ${result.importedCount} file(s) · ${result.skippedByExclusionCount} skipped by file-type exclusion"
+                result.importedCount > 0 ->
+                    "Imported ${result.importedCount} audio file(s) into Photon Library"
+                result.skippedByExclusionCount > 0 ->
+                    "Skipped ${result.skippedByExclusionCount} file(s) matching your excluded file types"
+                else ->
+                    "Selected files are already in your library"
+            }
+            _snackbarMessages.tryEmit(msg)
+        }
+    }
+
+    fun addWatchedFolder(treeUri: Uri) {
+        viewModelScope.launch {
+            val msg = libraryRepository.addWatchedFolder(treeUri)
+            _snackbarMessages.tryEmit(msg)
+        }
+    }
+
+    fun removeWatchedFolder(folderUri: String) {
+        viewModelScope.launch {
+            libraryRepository.removeWatchedFolder(folderUri)
+            _snackbarMessages.tryEmit("Removed watched folder")
+        }
+    }
+
+    fun addExcludedSafFolder(treeUri: Uri) {
+        viewModelScope.launch {
+            val msg = libraryRepository.addExcludedSafFolder(treeUri)
+            _snackbarMessages.tryEmit(msg)
+        }
+    }
+
+    fun addExcludedFolderName(name: String) {
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            val msg = libraryRepository.addExcludedFolderName(name)
+            _snackbarMessages.tryEmit(msg)
+        }
+    }
+
+    fun removeExcludedFolder(identifier: String) {
+        viewModelScope.launch {
+            libraryRepository.removeExcludedFolder(identifier)
+            _snackbarMessages.tryEmit("Removed folder exclusion")
+        }
+    }
+
+    fun setAutoScanEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.setAutoScanEnabled(enabled)
+        }
+    }
+
+    fun toggleExcludedFileType(fileType: String) {
+        viewModelScope.launch {
+            settingsRepository.toggleExcludedFileType(fileType)
+        }
+    }
+
+    fun scanWatchedFoldersNow() {
+        viewModelScope.launch {
+            val result = libraryRepository.scanWatchedFoldersNow()
+            val msg = when {
+                result.importedCount > 0 && result.skippedByExclusionCount > 0 ->
+                    "Auto-detected ${result.importedCount} new track(s) · ${result.skippedByExclusionCount} excluded"
+                result.importedCount > 0 ->
+                    "Auto-detected & imported ${result.importedCount} new track(s)"
+                result.skippedByExclusionCount > 0 ->
+                    "Scan complete · ${result.skippedByExclusionCount} item(s) skipped by exclusions"
+                else ->
+                    "Scan complete — library is up to date"
+            }
+            _snackbarMessages.tryEmit(msg)
+        }
+    }
+
+    fun generateStarterWavTracks() {
+        viewModelScope.launch {
+            _snackbarMessages.tryEmit("Synthesizing 44.1kHz stereo WAV studio tracks...")
+            val result = libraryRepository.generateStarterStudioWavTracks()
+            _snackbarMessages.tryEmit(
+                when {
+                    result.importedCount > 0 -> "Added ${result.importedCount} studio WAV track(s) — auto-fetching web metadata!"
+                    result.skippedByExclusionCount > 0 -> "WAV files were skipped because WAV is currently excluded"
+                    else -> "Studio WAV tracks already loaded"
+                }
+            )
+        }
+    }
+
+    fun dropTestTrackToWatchedFolder() {
+        viewModelScope.launch {
+            val name = libraryRepository.dropTestTrackIntoWatchedFolder()
+            _snackbarMessages.tryEmit("Dropped \"$name\" into watched folder — scanning now!")
+        }
+    }
+
+    fun deleteTrack(track: TrackEntity) {
+        viewModelScope.launch {
+            libraryRepository.deleteTrack(track.id)
+            _snackbarMessages.tryEmit("Removed \"${track.title}\" from library")
+        }
+    }
+
+    // ---- Drag-and-Drop Reordering ----
+
+    fun persistLibraryOrder(orderedTracks: List<TrackEntity>) {
+        viewModelScope.launch {
+            if (settings.value.sortOption != SortOption.CUSTOM_ORDER) {
+                settingsRepository.setSort(SortOption.CUSTOM_ORDER, SortDirection.ASC)
+            }
+            libraryRepository.reorderLibraryTracks(orderedTracks.map { it.id })
+            if (playbackState.value.queue.size == orderedTracks.size) {
+                playerController.reorderQueue(orderedTracks)
+            }
+        }
+    }
+
+    fun persistPlaylistOrder(playlistId: Long, orderedTracks: List<TrackEntity>) {
+        viewModelScope.launch {
+            libraryRepository.reorderPlaylistTracks(playlistId, orderedTracks.map { it.id })
+        }
+    }
+
+    // ---- Playback Controls ----
+
+    fun playTracks(tracks: List<TrackEntity>, startIndex: Int) {
+        if (tracks.isEmpty()) return
+        lastAutoAppendedForTrackId = null
+        playerController.playQueue(tracks, startIndex)
+    }
+
+    fun playShuffled(tracks: List<TrackEntity>) {
+        if (tracks.isEmpty()) return
+        lastAutoAppendedForTrackId = null
+        val shuffled = tracks.shuffled()
+        playerController.playQueue(shuffled, 0)
+    }
+
+    // ---- Custom Playlists ----
+
+    fun selectPlaylist(playlistId: Long?) {
+        _selectedPlaylistId.value = playlistId
+    }
+
+    fun createPlaylist(name: String, description: String) {
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            libraryRepository.createPlaylist(name, description)
+            _snackbarMessages.tryEmit("Created playlist \"$name\"")
+        }
+    }
+
+    fun createPlaylistAndAddTrack(name: String, track: TrackEntity) {
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            val playlistId = libraryRepository.createPlaylist(name, "")
+            libraryRepository.addTrackToPlaylist(playlistId, track.id)
+            _snackbarMessages.tryEmit("Created \"$name\" and added \"${track.title}\"")
+        }
+    }
+
+    fun renamePlaylist(playlistId: Long, name: String, description: String) {
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            libraryRepository.renamePlaylist(playlistId, name, description)
+            _snackbarMessages.tryEmit("Updated playlist \"$name\"")
+        }
+    }
+
+    fun deletePlaylist(playlistId: Long) {
+        viewModelScope.launch {
+            if (_selectedPlaylistId.value == playlistId) {
+                _selectedPlaylistId.value = null
+            }
+            libraryRepository.deletePlaylist(playlistId)
+            _snackbarMessages.tryEmit("Deleted playlist")
+        }
+    }
+
+    fun addTrackToPlaylist(playlistId: Long, track: TrackEntity) {
+        viewModelScope.launch {
+            libraryRepository.addTrackToPlaylist(playlistId, track.id)
+            _snackbarMessages.tryEmit("Added \"${track.title}\" to playlist")
+        }
+    }
+
+    fun removeTrackFromPlaylist(playlistId: Long, track: TrackEntity) {
+        viewModelScope.launch {
+            libraryRepository.removeTrackFromPlaylist(playlistId, track.id)
+        }
+    }
+
+    // ---- Dedicated Metadata Editor & High-Precision Web Auto-Complete ----
+
+    fun selectTrackForEditor(track: TrackEntity) {
+        _editorSelectedTrackId.value = track.id
+        val defaultQuery = buildString {
+            if (track.artist != "Unknown Artist" && track.artist.isNotBlank()) {
+                append(track.artist)
+                append(" ")
+            }
+            append(MetadataAutoCompleteRepository.cleanSearchQuery(track.title))
+        }.trim()
+        _editorSearchState.value = MetadataSearchUiState(
+            targetTrack = track,
+            query = defaultQuery,
+            isLoading = false,
+            results = emptyList(),
+            errorMessage = null
+        )
+    }
+
+    fun selectTrackForEditorById(trackId: Long) {
+        val found = allTracks.value.firstOrNull { it.id == trackId } ?: return
+        selectTrackForEditor(found)
+    }
+
+    fun updateEditorSearchQuery(query: String) {
+        _editorSearchState.value = _editorSearchState.value.copy(query = query)
+    }
+
+    fun searchMetadataForEditor(query: String = _editorSearchState.value.query, targetTrack: TrackEntity? = null) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+        val resolvedTrack = targetTrack ?: allTracks.value.firstOrNull { it.id == _editorSelectedTrackId.value }
+        viewModelScope.launch {
+            _editorSearchState.value = _editorSearchState.value.copy(
+                targetTrack = resolvedTrack,
+                query = trimmed,
+                isLoading = true,
+                errorMessage = null
+            )
+            try {
+                val results = libraryRepository.searchWebMetadata(
+                    query = trimmed,
+                    hintTitle = resolvedTrack?.title,
+                    hintArtist = resolvedTrack?.artist
+                )
+                _editorSearchState.value = _editorSearchState.value.copy(
+                    isLoading = false,
+                    results = results,
+                    errorMessage = if (results.isEmpty()) {
+                        "No exact web matches found. Edit any field manually below or refine the search query."
+                    } else null
+                )
+            } catch (_: Exception) {
+                _editorSearchState.value = _editorSearchState.value.copy(
+                    isLoading = false,
+                    errorMessage = "Offline or network unreachable — you can still edit and save all metadata locally on-device."
+                )
+            }
+        }
+    }
+
+    fun saveFullTrackMetadata(
+        trackId: Long,
+        title: String,
+        artist: String,
+        album: String,
+        trackNumber: Int?,
+        genre: String,
+        publisher: String,
+        releaseDate: String,
+        composer: String,
+        notes: String,
+        artworkUri: String?,
+        replaceArtwork: Boolean = true
+    ) {
+        viewModelScope.launch {
+            libraryRepository.updateTrackMetadataManual(
+                trackId = trackId,
+                title = title,
+                artist = artist,
+                album = album,
+                genre = genre,
+                publisher = publisher,
+                releaseDate = releaseDate,
+                trackNumber = trackNumber,
+                composer = composer,
+                notes = notes,
+                artworkUri = artworkUri,
+                replaceArtwork = replaceArtwork
+            )
+            _snackbarMessages.tryEmit("Saved metadata & album cover locally for \"${title.trim().ifBlank { "Track" }}\"")
+        }
+    }
+
+    fun savePickedCoverArtwork(uri: Uri, trackId: Long, onSaved: (String) -> Unit) {
+        viewModelScope.launch {
+            val savedPath = libraryRepository.savePickedArtworkLocally(uri, trackId)
+            if (savedPath != null) {
+                onSaved(savedPath)
+                _snackbarMessages.tryEmit("Album cover saved on device — tap Save Metadata to apply")
+            } else {
+                _snackbarMessages.tryEmit("Could not read selected image")
+            }
+        }
+    }
+
+    fun openMetadataAutoComplete(track: TrackEntity) {
+        selectTrackForEditor(track)
+        val defaultQuery = _editorSearchState.value.query
+        _metadataUiState.value = MetadataSearchUiState(
+            targetTrack = track,
+            query = defaultQuery,
+            isLoading = true,
+            results = emptyList(),
+            errorMessage = null
+        )
+        performMetadataSearch(defaultQuery)
+    }
+
+    fun dismissMetadataAutoComplete() {
+        _metadataUiState.value = MetadataSearchUiState()
+    }
+
+    fun updateMetadataQuery(query: String) {
+        _metadataUiState.value = _metadataUiState.value.copy(query = query)
+    }
+
+    fun performMetadataSearch(query: String = _metadataUiState.value.query) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+        val target = _metadataUiState.value.targetTrack
+        viewModelScope.launch {
+            _metadataUiState.value = _metadataUiState.value.copy(
+                query = trimmed,
+                isLoading = true,
+                errorMessage = null
+            )
+            try {
+                val results = libraryRepository.searchWebMetadata(
+                    query = trimmed,
+                    hintTitle = target?.title,
+                    hintArtist = target?.artist
+                )
+                _metadataUiState.value = _metadataUiState.value.copy(
+                    isLoading = false,
+                    results = results,
+                    errorMessage = if (results.isEmpty()) "No exact web matches found. Try editing the search query." else null
+                )
+            } catch (_: Exception) {
+                _metadataUiState.value = _metadataUiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "Network search failed. Check connection and retry."
+                )
+            }
+        }
+    }
+
+    fun applyMetadataSuggestion(suggestion: MetadataSuggestion) {
+        val track = _metadataUiState.value.targetTrack ?: return
+        viewModelScope.launch {
+            libraryRepository.applyMetadata(track.id, suggestion)
+            _metadataUiState.value = MetadataSearchUiState()
+            _snackbarMessages.tryEmit("Updated metadata & album art for \"${suggestion.title}\"")
+        }
+    }
+
+    fun saveManualMetadata(
+        trackId: Long,
+        title: String,
+        artist: String,
+        album: String,
+        genre: String,
+        publisher: String,
+        releaseDate: String,
+        artworkUri: String?
+    ) {
+        viewModelScope.launch {
+            libraryRepository.updateTrackMetadataManual(
+                trackId = trackId,
+                title = title,
+                artist = artist,
+                album = album,
+                genre = genre,
+                publisher = publisher,
+                releaseDate = releaseDate,
+                artworkUri = artworkUri,
+                replaceArtwork = !artworkUri.isNullOrBlank()
+            )
+            _metadataUiState.value = MetadataSearchUiState()
+            _snackbarMessages.tryEmit("Saved custom metadata for \"$title\"")
+        }
+    }
+
+    // ---- Privacy-First GitHub Update Checker ----
+
+    fun checkForGitHubUpdates(manual: Boolean = false) {
+        if (_isCheckingUpdate.value) return
+        viewModelScope.launch {
+            _isCheckingUpdate.value = true
+            if (manual) {
+                _updateCheckStatus.value = "Checking GitHub releases..."
+            }
+            val currentSettings = settingsRepository.settingsFlow.first()
+            when (val outcome = gitHubUpdateChecker.checkForUpdate(currentSettings.githubUpdateRepo)) {
+                is UpdateCheckOutcome.Offline -> {
+                    _updateCheckStatus.value = "Offline — connect to the internet to check GitHub"
+                    if (manual) _snackbarMessages.tryEmit("You are offline — connect to check GitHub updates")
+                }
+                is UpdateCheckOutcome.UpToDate -> {
+                    _updateCheckStatus.value = "Up to date (v${outcome.currentVersion})"
+                    if (manual) _snackbarMessages.tryEmit("Photon Audio v${outcome.currentVersion} is up to date")
+                }
+                is UpdateCheckOutcome.UpdateAvailable -> {
+                    _updateCheckStatus.value = "New version ${outcome.update.latestTag} available on GitHub"
+                    if (manual || currentSettings.dismissedUpdateTag != outcome.update.latestTag) {
+                        _availableUpdate.value = outcome.update
+                    }
+                }
+                is UpdateCheckOutcome.Unavailable -> {
+                    _updateCheckStatus.value = outcome.reason
+                    if (manual) _snackbarMessages.tryEmit(outcome.reason)
+                }
+            }
+            _isCheckingUpdate.value = false
+        }
+    }
+
+    fun dismissUpdateAlert(skipThisVersion: Boolean) {
+        val current = _availableUpdate.value
+        _availableUpdate.value = null
+        if (skipThisVersion && current != null) {
+            viewModelScope.launch {
+                settingsRepository.setDismissedUpdateTag(current.latestTag)
+            }
+        }
+    }
+
+    fun setGithubUpdateRepo(repo: String) {
+        viewModelScope.launch {
+            val cleaned = repo.trim().removePrefix("https://github.com/").trim('/')
+            if (!cleaned.contains("/")) {
+                _snackbarMessages.tryEmit("Enter GitHub repository as owner/repo")
+                return@launch
+            }
+            settingsRepository.setGithubUpdateRepo(cleaned)
+            _snackbarMessages.tryEmit("Saved GitHub update source: $cleaned")
+            if (gitHubUpdateChecker.isOnline()) {
+                checkForGitHubUpdates(manual = true)
+            }
+        }
+    }
+
+    fun setCheckUpdatesOnLaunch(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setCheckUpdatesOnLaunch(enabled) }
+    }
+
+    // ---- Equalizer & Commonly Used Playback Settings ----
+
+    fun setDarkMode(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setDarkMode(enabled) }
+    }
+
+    fun setCrossfadeSeconds(seconds: Int) {
+        viewModelScope.launch { settingsRepository.setCrossfadeSeconds(seconds) }
+    }
+
+    fun setPlaybackSpeed(speed: Float) {
+        viewModelScope.launch { settingsRepository.setPlaybackSpeed(speed) }
+    }
+
+    fun setSkipSilenceEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setSkipSilenceEnabled(enabled) }
+    }
+
+    fun setPauseOnAudioDisconnect(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setPauseOnAudioDisconnect(enabled) }
+    }
+
+    fun setHandleAudioFocus(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setHandleAudioFocus(enabled) }
+    }
+
+    fun setKeepScreenOn(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setKeepScreenOn(enabled) }
+    }
+
+    fun setGestureControlsEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setGestureControlsEnabled(enabled) }
+    }
+
+    fun setAutoEnrichMetadata(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setAutoEnrichMetadata(enabled) }
+    }
+
+    fun setEqEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setEqEnabled(enabled) }
+    }
+
+    fun applyEqPreset(preset: EqualizerPreset) {
+        viewModelScope.launch {
+            settingsRepository.setEqBands(preset.name, preset.bandRatios)
+            settingsRepository.setSpatialEffects(preset.bassBoost, preset.virtualizer)
+        }
+    }
+
+    fun updateEqBand(bandIndex: Int, normalizedRatio: Float) {
+        val current = settings.value.eqBandRatios.toMutableList()
+        if (bandIndex !in current.indices) return
+        current[bandIndex] = normalizedRatio.coerceIn(-1f, 1f)
+        viewModelScope.launch {
+            settingsRepository.setEqBands("Custom", current)
+        }
+    }
+
+    fun updateSpatialEffects(bassBoost: Int, virtualizer: Int) {
+        viewModelScope.launch {
+            settingsRepository.setSpatialEffects(bassBoost, virtualizer)
+        }
+    }
+
+    fun resetSettingsToDefaults() {
+        viewModelScope.launch {
+            settingsRepository.resetToDefaults()
+            _snackbarMessages.tryEmit("Restored default Photon Audio settings on device")
+        }
+    }
+
+    // ---- Sleep Timer ----
+
+    fun startSleepTimerMinutes(minutes: Int) {
+        playerController.startSleepTimerMinutes(minutes)
+        _snackbarMessages.tryEmit("Sleep timer set for $minutes min (with gentle fade-out)")
+    }
+
+    fun startSleepTimerEndOfTrack() {
+        playerController.startSleepTimerEndOfTrack()
+        _snackbarMessages.tryEmit("Playback will pause after the current track")
+    }
+
+    fun cancelSleepTimer() {
+        playerController.cancelSleepTimer()
+        _snackbarMessages.tryEmit("Sleep timer cancelled")
+    }
+
+    // ---- Sorting Comparator ----
+
+    private fun sortTracks(
+        tracks: List<TrackEntity>,
+        option: SortOption,
+        direction: SortDirection
+    ): List<TrackEntity> {
+        val comparator: Comparator<TrackEntity> = when (option) {
+            SortOption.CUSTOM_ORDER -> compareBy<TrackEntity> { it.sortOrder }.thenBy { it.dateAdded }
+            SortOption.ARTIST -> compareBy<TrackEntity> { it.artist.lowercase() }
+                .thenBy { it.album.lowercase() }
+                .thenBy { it.title.lowercase() }
+            SortOption.GENRE -> compareBy<TrackEntity> { it.genre.lowercase() }
+                .thenBy { it.artist.lowercase() }
+                .thenBy { it.title.lowercase() }
+            SortOption.ALBUM -> compareBy<TrackEntity> { it.album.lowercase() }
+                .thenBy { it.artist.lowercase() }
+                .thenBy { it.title.lowercase() }
+            SortOption.PUBLISHER -> compareBy<TrackEntity> { it.publisher.lowercase() }
+                .thenBy { it.artist.lowercase() }
+                .thenBy { it.title.lowercase() }
+            SortOption.RELEASE_YEAR -> compareBy<TrackEntity> { it.releaseYear ?: Int.MIN_VALUE }
+                .thenBy { it.title.lowercase() }
+            SortOption.TITLE -> compareBy<TrackEntity> { it.title.lowercase() }
+            SortOption.DATE_ADDED -> compareBy<TrackEntity> { it.dateAdded }
+        }
+
+        val sorted = tracks.sortedWith(comparator)
+        return if (option == SortOption.CUSTOM_ORDER || direction == SortDirection.ASC) {
+            sorted
+        } else {
+            sorted.reversed()
+        }
+    }
+
+    class Factory(
+        private val libraryRepository: LibraryRepository,
+        private val settingsRepository: SettingsRepository,
+        private val playerController: PhotonPlayerController,
+        private val gitHubUpdateChecker: GitHubUpdateChecker
+    ) : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            return PhotonViewModel(
+                libraryRepository = libraryRepository,
+                settingsRepository = settingsRepository,
+                playerController = playerController,
+                gitHubUpdateChecker = gitHubUpdateChecker
+            ) as T
+        }
+    }
+}
