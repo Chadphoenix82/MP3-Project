@@ -7,6 +7,7 @@ import com.example.data.db.ExcludedFolderEntity
 import com.example.data.db.GenrePlayStat
 import com.example.data.db.ListeningHistoryDao
 import com.example.data.db.ListeningHistoryEntity
+import com.example.data.db.PlaylistArtworkRow
 import com.example.data.db.PlaylistDao
 import com.example.data.db.PlaylistEntity
 import com.example.data.db.PlaylistTrackCrossRef
@@ -46,10 +47,12 @@ class LibraryRepository(
     private val folderMonitorManager: FolderMonitorManager,
     private val wavGenerator: StudioWavGenerator,
     private val settingsRepository: SettingsRepository,
-    private val replayGainAnalyzer: ReplayGainAnalyzer
+    private val replayGainAnalyzer: ReplayGainAnalyzer,
+    private val lyricsRepository: LyricsRepository
 ) {
     val allTracks: Flow<List<TrackEntity>> = trackDao.observeAllTracks()
     val playlists: Flow<List<PlaylistWithSummary>> = playlistDao.observePlaylistsWithSummary()
+    val playlistArtworks: Flow<List<PlaylistArtworkRow>> = playlistDao.observeAllPlaylistArtworks()
     val watchedFolders: Flow<List<WatchedFolderEntity>> = watchedFolderDao.observeWatchedFolders()
     val excludedFolders: Flow<List<ExcludedFolderEntity>> = excludedFolderDao.observeExcludedFolders()
     val recentHistory: Flow<List<ListeningHistoryEntity>> = listeningHistoryDao.observeRecentHistory(150)
@@ -160,6 +163,21 @@ class LibraryRepository(
         folderMonitorManager.scanAllWatchedFolders(triggerMetadataEnrichment = true)
         return created.name
     }
+
+    suspend fun generateStudioWavSample(type: StudioWavSampleType): String {
+        val created = wavGenerator.generateStudioSample(type)
+        folderMonitorManager.scanAllWatchedFolders(triggerMetadataEnrichment = false)
+        return created.name
+    }
+
+    suspend fun loadTrackLyrics(track: TrackEntity): ParsedLyrics =
+        lyricsRepository.loadLocalOrCachedLyrics(track)
+
+    suspend fun fetchTrackLyricsOnline(track: TrackEntity): Result<ParsedLyrics> =
+        lyricsRepository.fetchWebLyricsAndCache(track)
+
+    suspend fun saveCustomLyrics(trackId: Long, rawLyrics: String): ParsedLyrics =
+        lyricsRepository.saveCustomLyrics(trackId, rawLyrics)
 
     suspend fun searchWebMetadata(
         query: String,

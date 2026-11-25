@@ -46,8 +46,8 @@ class PhotonAudioEffects {
     var telemetry: EqTelemetry = EqTelemetry()
         private set
 
-    fun attachToSession(audioSessionId: Int): EqTelemetry {
-        if (audioSessionId <= 0 || audioSessionId == currentSessionId) {
+    fun attachToSession(audioSessionId: Int, forceRebind: Boolean = false): EqTelemetry {
+        if (audioSessionId <= 0 || (!forceRebind && audioSessionId == currentSessionId)) {
             applyCurrentSettings()
             return telemetry
         }

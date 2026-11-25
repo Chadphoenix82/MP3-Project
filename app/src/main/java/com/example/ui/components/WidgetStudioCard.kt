@@ -60,7 +60,7 @@ import com.example.data.db.TrackEntity
 import com.example.data.model.WidgetThemeMode
 import com.example.data.prefs.AppSettings
 import com.example.ui.theme.LocalPhotonColors
-import com.example.widget.PhotonAudioWidgetProvider
+import com.example.widget.PhotonGlanceWidgetReceiver
 import kotlin.math.roundToInt
 
 private enum class WidgetPreviewSize(val label: String, val cells: String) {
@@ -520,7 +520,7 @@ fun WidgetStudioCard(
             Button(
                 onClick = {
                     val manager = AppWidgetManager.getInstance(context)
-                    val provider = ComponentName(context, PhotonAudioWidgetProvider::class.java)
+                    val provider = ComponentName(context, PhotonGlanceWidgetReceiver::class.java)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.isRequestPinAppWidgetSupported) {
                         val requested = manager.requestPinAppWidget(provider, null, null)
                         if (requested) {

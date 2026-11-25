@@ -21,6 +21,7 @@ import android.util.SizeF
 import android.view.View
 import android.widget.RemoteViews
 import androidx.compose.ui.graphics.toArgb
+import androidx.glance.appwidget.updateAll
 import com.example.MainActivity
 import com.example.PhotonApplication
 import com.example.R
@@ -31,15 +32,28 @@ import com.example.player.PlaybackUiState
 import com.example.ui.theme.CosmicThemeSkin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.roundToInt
 
+data class GlanceWidgetPalette(
+    val bgStart: Int,
+    val bgEnd: Int,
+    val borderColor: Int,
+    val accentPrimary: Int,
+    val accentSecondary: Int,
+    val onAccent: Int,
+    val titleColor: Int,
+    val subtitleColor: Int
+)
+
 /**
- * Renders responsive multi-size RemoteViews (Compact 2x1, Standard 4x1/4x2, Studio 4x3+)
- * synchronized with Photon Audio's active theme or album-art palette and live playback state.
+ * Debounced Jetpack Glance widget synchronizer & responsive RemoteViews fallback.
+ * Debounces rapid track skipping (250ms) to prevent Binder transaction bottlenecks.
  */
 object PhotonWidgetUpdater {
 
@@ -49,7 +63,12 @@ object PhotonWidgetUpdater {
     const val ACTION_TOGGLE_FAVORITE = "com.example.widget.ACTION_TOGGLE_FAVORITE"
     const val ACTION_TOGGLE_SHUFFLE = "com.example.widget.ACTION_TOGGLE_SHUFFLE"
 
+    private const val WIDGET_UPDATE_DEBOUNCE_MS = 250L
+
     private val updaterScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var pendingDebounceJob: Job? = null
 
     @Volatile
     private var cachedArtUri: String? = null
@@ -74,9 +93,37 @@ object PhotonWidgetUpdater {
         val subtitleColor: Int
     )
 
+    fun loadRoundedArtworkForGlance(context: Context, artworkUri: String?): Bitmap? =
+        loadRoundedArtwork(context, artworkUri)
+
+    fun resolveGlancePalette(settings: AppSettings, hasArtwork: Boolean): GlanceWidgetPalette {
+        val p = resolvePalette(settings, hasArtwork)
+        return GlanceWidgetPalette(
+            bgStart = p.bgStart,
+            bgEnd = p.bgEnd,
+            borderColor = p.borderColor,
+            accentPrimary = p.accentPrimary,
+            accentSecondary = p.accentSecondary,
+            onAccent = p.onAccent,
+            titleColor = p.titleColor,
+            subtitleColor = p.subtitleColor
+        )
+    }
+
+    fun buildCodecLabelForGlance(playback: PlaybackUiState): String = buildCodecLabel(playback)
+
+    fun formatClockForGlance(ms: Long): String = formatClock(ms)
+
     fun requestUpdate(context: Context, specificWidgetIds: IntArray? = null) {
         val appContext = context.applicationContext
-        updaterScope.launch {
+        pendingDebounceJob?.cancel()
+        pendingDebounceJob = updaterScope.launch {
+            delay(WIDGET_UPDATE_DEBOUNCE_MS)
+            // 1. Update Jetpack Glance Widgets
+            runCatching {
+                PhotonGlanceWidget().updateAll(appContext)
+            }
+            // 2. Keep legacy RemoteViews provider updated if any pinned instances remain
             runCatching {
                 val manager = AppWidgetManager.getInstance(appContext)
                 val component = ComponentName(appContext, PhotonAudioWidgetProvider::class.java)

@@ -68,7 +68,10 @@ data class PlaybackUiState(
     val abLoopActive: Boolean = false,
     val sleepTimer: SleepTimerState = SleepTimerState(),
     val eqTelemetry: EqTelemetry = EqTelemetry(),
-    val signalInfo: AudioSignalInfo = AudioSignalInfo()
+    val signalInfo: AudioSignalInfo = AudioSignalInfo(),
+    val priorityQueueIds: Set<Long> = emptySet(),
+    val queueSourceLabel: String = "Library",
+    val gaplessPlaybackEnabled: Boolean = true
 )
 
 /**
@@ -106,7 +109,8 @@ class PhotonPlaybackService : MediaSessionService() {
     private val playerSignalSnapshots = mutableMapOf<ExoPlayer, AudioSignalInfo>()
 
     private var mediaSession: MediaSession? = null
-    private val audioEffects = PhotonAudioEffects()
+    private var audioEffects = PhotonAudioEffects()
+    private var standbyAudioEffects = PhotonAudioEffects()
     private var outputMonitor: AudioOutputMonitor? = null
     private var lastEqEnabled: Boolean = true
     private var lastEqRatios: List<Float> = PhotonEqPresets.default10BandRatios
@@ -121,10 +125,14 @@ class PhotonPlaybackService : MediaSessionService() {
     private var sleepTimerJob: Job? = null
 
     private var queue: MutableList<TrackEntity> = mutableListOf()
+    private val priorityNextTrackIds: LinkedHashSet<Long> = linkedSetOf()
+    private var queueSourceLabel: String = "Library"
     private var currentIndex: Int = -1
     private var shuffleEnabled: Boolean = false
     private var repeatMode: RepeatModeState = RepeatModeState.ALL
     private var crossfadeSeconds: Int = 4
+    private var gaplessPlaybackEnabled: Boolean = true
+    private var gaplessPreparedIndex: Int = -1
     private var playbackSpeed: Float = 1.0f
     private var playbackPitch: Float = 1.0f
     private var abLoopStartMs: Long? = null
@@ -253,6 +261,19 @@ class PhotonPlaybackService : MediaSessionService() {
         }
 
         val analyticsListener = object : AnalyticsListener {
+            override fun onAudioSessionIdChanged(
+                eventTime: AnalyticsListener.EventTime,
+                audioSessionId: Int
+            ) {
+                val player = builtPlayerRef ?: return
+                if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) return
+                if (player === activePlayer) {
+                    attachEffectsToActivePlayer(forceRebind = true)
+                } else if (player === standbyPlayer) {
+                    attachEffectsToStandbyPlayer(audioSessionId)
+                }
+            }
+
             override fun onAudioDecoderInitialized(
                 eventTime: AnalyticsListener.EventTime,
                 decoderName: String,
@@ -356,6 +377,7 @@ class PhotonPlaybackService : MediaSessionService() {
         sleepTimerJob?.cancel()
         serviceScope.cancel()
         audioEffects.release()
+        standbyAudioEffects.release()
         mediaSession?.release()
         mediaSession = null
         playerA.removeListener(playerListener)
@@ -368,9 +390,12 @@ class PhotonPlaybackService : MediaSessionService() {
 
     // ---- Playback Operations ----
 
-    fun playQueue(tracks: List<TrackEntity>, startIndex: Int) {
+    fun playQueue(tracks: List<TrackEntity>, startIndex: Int, sourceLabel: String = "Library") {
         if (tracks.isEmpty()) return
         cancelCrossfade()
+        gaplessPreparedIndex = -1
+        priorityNextTrackIds.clear()
+        queueSourceLabel = sourceLabel.ifBlank { "Library" }
         queue = tracks.toMutableList()
         currentIndex = startIndex.coerceIn(0, queue.lastIndex)
         loadAndPlayOnActive(queue[currentIndex])
@@ -393,6 +418,7 @@ class PhotonPlaybackService : MediaSessionService() {
     fun reorderQueue(newOrder: List<TrackEntity>) {
         val playingTrackId = queue.getOrNull(currentIndex)?.id
         queue = newOrder.toMutableList()
+        gaplessPreparedIndex = -1
         if (playingTrackId != null) {
             val newIdx = queue.indexOfFirst { it.id == playingTrackId }
             if (newIdx >= 0) currentIndex = newIdx
@@ -402,16 +428,17 @@ class PhotonPlaybackService : MediaSessionService() {
 
     fun enqueueNext(track: TrackEntity) {
         if (queue.isEmpty() || currentIndex !in queue.indices) {
-            playQueue(listOf(track), 0)
+            playQueue(listOf(track), 0, sourceLabel = "Playing Next")
             return
         }
-        // Remove any duplicate occurrence strictly after currentIndex so it moves cleanly to next
         val upcomingIdx = queue.drop(currentIndex + 1).indexOfFirst { it.id == track.id }
         if (upcomingIdx >= 0) {
             queue.removeAt(currentIndex + 1 + upcomingIdx)
         }
         val insertAt = (currentIndex + 1).coerceAtMost(queue.size)
         queue.add(insertAt, track)
+        priorityNextTrackIds.add(track.id)
+        gaplessPreparedIndex = -1
         publishQueueState()
     }
 
@@ -454,7 +481,9 @@ class PhotonPlaybackService : MediaSessionService() {
         if (index !in queue.indices) return
         if (queue.size <= 1) return
         val removingCurrent = index == currentIndex
-        queue.removeAt(index)
+        val removed = queue.removeAt(index)
+        priorityNextTrackIds.remove(removed.id)
+        gaplessPreparedIndex = -1
         when {
             removingCurrent -> {
                 currentIndex = index.coerceAtMost(queue.lastIndex)
@@ -472,6 +501,8 @@ class PhotonPlaybackService : MediaSessionService() {
         if (queue.isEmpty() || currentIndex !in queue.indices) return
         if (currentIndex < queue.lastIndex) {
             queue = queue.subList(0, currentIndex + 1).toMutableList()
+            priorityNextTrackIds.clear()
+            gaplessPreparedIndex = -1
             publishQueueState()
         }
     }
@@ -585,6 +616,12 @@ class PhotonPlaybackService : MediaSessionService() {
         crossfadeCurve = curve
     }
 
+    fun setGaplessPlaybackEnabled(enabled: Boolean) {
+        gaplessPlaybackEnabled = enabled
+        if (!enabled) gaplessPreparedIndex = -1
+        PhotonPlaybackBridge.updateState { it.copy(gaplessPlaybackEnabled = enabled) }
+    }
+
     @OptIn(UnstableApi::class)
     fun updatePlaybackOptions(
         speed: Float,
@@ -621,7 +658,9 @@ class PhotonPlaybackService : MediaSessionService() {
         lastEqRatios = PhotonEqPresets.normalizeTo10Bands(ratios)
         lastBassStrength = bass.coerceIn(0, 1000)
         lastVirtualizerStrength = virtualizer.coerceIn(0, 1000)
-        audioEffects.updateSettings(enabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effectiveStudioDsp())
+        val effective = effectiveStudioDsp()
+        audioEffects.updateSettings(enabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effective)
+        standbyAudioEffects.updateSettings(enabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effective)
         syncProcessorsWithEqualizer()
         PhotonPlaybackBridge.updateState { it.copy(eqTelemetry = audioEffects.telemetry) }
     }
@@ -630,6 +669,7 @@ class PhotonPlaybackService : MediaSessionService() {
         lastStudioDsp = config
         val effective = effectiveStudioDsp()
         audioEffects.updateSettings(lastEqEnabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effective)
+        standbyAudioEffects.updateSettings(lastEqEnabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effective)
         syncProcessorsWithEqualizer()
         PhotonPlaybackBridge.updateState { it.copy(eqTelemetry = audioEffects.telemetry) }
     }
@@ -786,12 +826,71 @@ class PhotonPlaybackService : MediaSessionService() {
         }
         if (useQuickCrossfade) {
             startCrossfadeToIndex(nextIdx, durationMs = minOf(crossfadeSeconds * 1000L, 1200L))
+        } else if (gaplessPlaybackEnabled && crossfadeSeconds == 0 && gaplessPreparedIndex == nextIdx && standbyPlayer != null) {
+            handoffGaplessPreparedTrack(nextIdx)
         } else {
             cancelCrossfade()
+            gaplessPreparedIndex = -1
             currentIndex = nextIdx
+            queue.getOrNull(currentIndex)?.let { priorityNextTrackIds.remove(it.id) }
             loadAndPlayOnActive(queue[currentIndex])
             publishQueueState()
         }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun prepareGaplessNext(nextIdx: Int) {
+        if (nextIdx !in queue.indices || gaplessPreparedIndex == nextIdx || isCrossfading) return
+        val incoming = standbyPlayer ?: buildExoPlayer().also {
+            playerB = it
+            standbyPlayer = it
+        }
+        val nextTrack = queue[nextIdx]
+        gaplessPreparedIndex = nextIdx
+        playerSignalSnapshots.remove(incoming)
+        incoming.stop()
+        incoming.clearMediaItems()
+        incoming.volume = 1f
+        incoming.playbackParameters = PlaybackParameters(playbackSpeed, playbackPitch)
+        incoming.setMediaItem(nextTrack.toMediaItem())
+        incoming.prepare()
+        val sessionId = incoming.audioSessionId
+        if (sessionId != C.AUDIO_SESSION_ID_UNSET && sessionId > 0) {
+            attachEffectsToStandbyPlayer(sessionId)
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun handoffGaplessPreparedTrack(targetIndex: Int) {
+        val outgoing = activePlayer ?: return
+        val incoming = standbyPlayer ?: return
+        val nextTrack = queue.getOrNull(targetIndex) ?: return
+
+        outgoing.removeListener(playerListener)
+        outgoing.pause()
+        outgoing.stop()
+        outgoing.volume = 1f
+
+        incoming.volume = 1f
+        incoming.addListener(playerListener)
+        incoming.play()
+
+        activePlayer = incoming
+        standbyPlayer = outgoing
+        currentIndex = targetIndex
+        gaplessPreparedIndex = -1
+        priorityNextTrackIds.remove(nextTrack.id)
+
+        // Swap hardware audio effect instances so incoming EQ stays seamlessly locked
+        val prevActiveFx = audioEffects
+        audioEffects = standbyAudioEffects
+        standbyAudioEffects = prevActiveFx
+        standbyAudioEffects.release()
+
+        seedSignalInfoFromTrack(nextTrack)
+        mediaSession?.player = incoming
+        attachEffectsToActivePlayer(forceRebind = true)
+        publishQueueState()
     }
 
     @OptIn(UnstableApi::class)
@@ -804,6 +903,7 @@ class PhotonPlaybackService : MediaSessionService() {
         }
 
         isCrossfading = true
+        gaplessPreparedIndex = -1
         PhotonPlaybackBridge.updateState { it.copy(isCrossfading = true) }
 
         val nextTrack = queue[targetIndex]
@@ -817,6 +917,13 @@ class PhotonPlaybackService : MediaSessionService() {
         incoming.prepare()
         incoming.play()
 
+        // Dynamically bind standby Equalizer/DSP to incoming ExoPlayer session BEFORE fade ramps in
+        val incomingSessionId = incoming.audioSessionId
+        if (incomingSessionId != C.AUDIO_SESSION_ID_UNSET && incomingSessionId > 0) {
+            attachEffectsToStandbyPlayer(incomingSessionId)
+        }
+        syncProcessorsWithEqualizer()
+
         crossfadeJob?.cancel()
         crossfadeJob = serviceScope.launch {
             val safeDuration = durationMs.coerceIn(500L, 12_000L)
@@ -824,6 +931,13 @@ class PhotonPlaybackService : MediaSessionService() {
             val stepDelay = safeDuration / steps
 
             for (step in 1..steps) {
+                // Keep standby effects dynamically attached if ExoPlayer assigned sessionId lazily on play()
+                val liveInSession = incoming.audioSessionId
+                if (liveInSession != C.AUDIO_SESSION_ID_UNSET && liveInSession > 0 &&
+                    standbyAudioEffects.telemetry.attachedSessionId != liveInSession
+                ) {
+                    attachEffectsToStandbyPlayer(liveInSession)
+                }
                 val progress = step.toFloat() / steps.toFloat()
                 val (outGain, inGain) = crossfadeCurve.computeGains(progress)
                 outgoing.volume = outGain
@@ -831,7 +945,7 @@ class PhotonPlaybackService : MediaSessionService() {
                 delay(stepDelay)
             }
 
-            // Seamless handoff
+            // Seamless handoff with dynamic Equalizer session swap (never drops EQ across crossfades)
             outgoing.removeListener(playerListener)
             outgoing.pause()
             outgoing.stop()
@@ -843,7 +957,13 @@ class PhotonPlaybackService : MediaSessionService() {
             activePlayer = incoming
             standbyPlayer = outgoing
             currentIndex = targetIndex
+            priorityNextTrackIds.remove(nextTrack.id)
             isCrossfading = false
+
+            val prevActiveFx = audioEffects
+            audioEffects = standbyAudioEffects
+            standbyAudioEffects = prevActiveFx
+            standbyAudioEffects.release()
 
             seedSignalInfoFromTrack(nextTrack)
             playerSignalSnapshots[incoming]?.let { snap ->
@@ -866,7 +986,7 @@ class PhotonPlaybackService : MediaSessionService() {
             }
 
             mediaSession?.player = incoming
-            attachEffectsToActivePlayer()
+            attachEffectsToActivePlayer(forceRebind = true)
             publishQueueState()
         }
     }
@@ -908,20 +1028,24 @@ class PhotonPlaybackService : MediaSessionService() {
                         PhotonPlaybackBridge.updateState { it.copy(positionMs = loopStart) }
                     }
 
-                    // Trigger automatic dual-player crossfade when approaching track end
+                    // Trigger automatic dual-player crossfade OR gapless pre-buffer when approaching track end
                     val crossfadeMs = crossfadeSeconds * 1000L
                     if (
                         active.isPlaying &&
                         !isCrossfading &&
                         !isLoopingSegment &&
-                        !sleepEndOfTrack &&
-                        crossfadeMs > 0L &&
-                        dur > crossfadeMs + 1500L &&
-                        (dur - pos) in 200L..crossfadeMs
+                        !sleepEndOfTrack
                     ) {
-                        val nextIdx = computeNextIndex()
-                        if (nextIdx != null) {
-                            startCrossfadeToIndex(nextIdx, durationMs = (dur - pos).coerceAtLeast(800L))
+                        if (crossfadeMs > 0L && dur > crossfadeMs + 1500L && (dur - pos) in 200L..crossfadeMs) {
+                            val nextIdx = computeNextIndex()
+                            if (nextIdx != null) {
+                                startCrossfadeToIndex(nextIdx, durationMs = (dur - pos).coerceAtLeast(800L))
+                            }
+                        } else if (crossfadeMs == 0L && gaplessPlaybackEnabled && dur > 3500L && (dur - pos) in 300L..2500L) {
+                            val nextIdx = computeNextIndex()
+                            if (nextIdx != null && nextIdx != currentIndex) {
+                                prepareGaplessNext(nextIdx)
+                            }
                         }
                     }
                     if (!active.isPlaying) {
@@ -988,13 +1112,23 @@ class PhotonPlaybackService : MediaSessionService() {
     }
 
     @OptIn(UnstableApi::class)
-    private fun attachEffectsToActivePlayer() {
+    private fun attachEffectsToActivePlayer(forceRebind: Boolean = false) {
         val sessionId = activePlayer?.audioSessionId ?: return
         if (sessionId != C.AUDIO_SESSION_ID_UNSET && sessionId > 0) {
-            val telemetry = audioEffects.attachToSession(sessionId)
+            val effective = effectiveStudioDsp()
+            audioEffects.updateSettings(lastEqEnabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effective)
+            val telemetry = audioEffects.attachToSession(sessionId, forceRebind = forceRebind)
             syncProcessorsWithEqualizer()
             PhotonPlaybackBridge.updateState { it.copy(eqTelemetry = telemetry) }
         }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun attachEffectsToStandbyPlayer(sessionId: Int) {
+        if (sessionId == C.AUDIO_SESSION_ID_UNSET || sessionId <= 0) return
+        val effective = effectiveStudioDsp()
+        standbyAudioEffects.updateSettings(lastEqEnabled, lastEqRatios, lastBassStrength, lastVirtualizerStrength, effective)
+        standbyAudioEffects.attachToSession(sessionId, forceRebind = false)
     }
 
     private fun publishQueueState() {
@@ -1008,7 +1142,10 @@ class PhotonPlaybackService : MediaSessionService() {
                 isPlaying = active?.isPlaying == true,
                 isCrossfading = isCrossfading,
                 durationMs = active?.duration?.takeIf { d -> d > 0 } ?: track?.durationMs ?: 0L,
-                positionMs = active?.currentPosition?.coerceAtLeast(0L) ?: 0L
+                positionMs = active?.currentPosition?.coerceAtLeast(0L) ?: 0L,
+                priorityQueueIds = priorityNextTrackIds.toSet(),
+                queueSourceLabel = queueSourceLabel,
+                gaplessPlaybackEnabled = gaplessPlaybackEnabled
             )
         }
         PhotonWidgetUpdater.requestUpdate(this)

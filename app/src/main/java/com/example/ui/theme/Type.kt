@@ -43,108 +43,166 @@ val JetBrainsMonoFontFamily = FontFamily(
     Font(R.font.jetbrains_mono, FontWeight.Bold)
 )
 
+val OrbitronFontFamily = FontFamily(
+    Font(R.font.orbitron, FontWeight.Normal),
+    Font(R.font.orbitron, FontWeight.Medium),
+    Font(R.font.orbitron, FontWeight.SemiBold),
+    Font(R.font.orbitron, FontWeight.Bold)
+)
+
+val PlusJakartaSansFontFamily = FontFamily(
+    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
+    Font(R.font.plus_jakarta_sans, FontWeight.Medium),
+    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
+    Font(R.font.plus_jakarta_sans, FontWeight.Bold)
+)
+
 enum class AppFontChoice(
     val displayName: String,
     val subtitle: String
 ) {
-    PUBLIC_SANS("Public Sans", "Clean balanced default"),
+    PUBLIC_SANS("Public Sans", "Clean balanced studio sans"),
+    ORBITRON("Orbitron", "Cyber deck geometric display"),
     SPACE_GROTESK("Space Grotesk", "Futuristic geometric tech"),
-    OUTFIT("Outfit", "Sculpted modern sans"),
-    PLAYFAIR_DISPLAY("Playfair Display", "Editorial audiophile serif"),
-    JETBRAINS_MONO("JetBrains Mono", "Precision studio monospace");
+    JETBRAINS_MONO("JetBrains Mono", "Precision DSP monospace"),
+    PLUS_JAKARTA_SANS("Plus Jakarta Sans", "Refined modern editorial sans"),
+    OUTFIT("Outfit", "Sculpted minimalist hi-fi"),
+    PLAYFAIR_DISPLAY("Playfair Display", "Editorial audiophile serif");
 
     val fontFamily: FontFamily
         get() = when (this) {
             PUBLIC_SANS -> PublicSansFontFamily
+            ORBITRON -> OrbitronFontFamily
             SPACE_GROTESK -> SpaceGroteskFontFamily
+            JETBRAINS_MONO -> JetBrainsMonoFontFamily
+            PLUS_JAKARTA_SANS -> PlusJakartaSansFontFamily
             OUTFIT -> OutfitFontFamily
             PLAYFAIR_DISPLAY -> PlayfairDisplayFontFamily
-            JETBRAINS_MONO -> JetBrainsMonoFontFamily
         }
 }
 
-fun photonTypographyFor(fontChoice: AppFontChoice): Typography {
-    val family = fontChoice.fontFamily
+enum class DeckStylePreset(
+    val displayName: String,
+    val subtitle: String,
+    val displayFont: AppFontChoice,
+    val bodyFont: AppFontChoice,
+    val recommendedSkin: CosmicThemeSkin,
+    val darkMode: Boolean = true
+) {
+    CYBER_STUDIO(
+        displayName = "Cyber Studio",
+        subtitle = "Orbitron telemetry + JetBrains Mono · Photon Cyan",
+        displayFont = AppFontChoice.ORBITRON,
+        bodyFont = AppFontChoice.JETBRAINS_MONO,
+        recommendedSkin = CosmicThemeSkin.PHOTON_CYAN
+    ),
+    MINIMALIST_HIFI(
+        displayName = "Minimalist Hi-Fi",
+        subtitle = "Space Grotesk + Outfit · AMOLED Pure Black",
+        displayFont = AppFontChoice.SPACE_GROTESK,
+        bodyFont = AppFontChoice.OUTFIT,
+        recommendedSkin = CosmicThemeSkin.OLED_PURE_BLACK
+    ),
+    EDITORIAL(
+        displayName = "Editorial",
+        subtitle = "Playfair Display + Plus Jakarta Sans · Solar Gold",
+        displayFont = AppFontChoice.PLAYFAIR_DISPLAY,
+        bodyFont = AppFontChoice.PLUS_JAKARTA_SANS,
+        recommendedSkin = CosmicThemeSkin.SOLAR_GOLD
+    )
+}
+
+fun photonTypographyFor(
+    fontChoice: AppFontChoice,
+    deckPreset: DeckStylePreset? = null
+): Typography {
+    val displayFamily = deckPreset?.displayFont?.fontFamily ?: fontChoice.fontFamily
+    val bodyFamily = deckPreset?.bodyFont?.fontFamily ?: fontChoice.fontFamily
+    val monoLabelFamily = if (deckPreset == DeckStylePreset.CYBER_STUDIO) {
+        JetBrainsMonoFontFamily
+    } else {
+        bodyFamily
+    }
     return Typography(
         displaySmall = TextStyle(
-            fontFamily = family,
+            fontFamily = displayFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 30.sp,
             lineHeight = 36.sp,
             letterSpacing = (-0.25).sp
         ),
         headlineMedium = TextStyle(
-            fontFamily = family,
+            fontFamily = displayFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 24.sp,
             lineHeight = 30.sp,
             letterSpacing = (-0.15).sp
         ),
         headlineSmall = TextStyle(
-            fontFamily = family,
+            fontFamily = displayFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 20.sp,
             lineHeight = 26.sp,
             letterSpacing = 0.sp
         ),
         titleLarge = TextStyle(
-            fontFamily = family,
+            fontFamily = displayFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 20.sp,
             lineHeight = 26.sp,
             letterSpacing = 0.sp
         ),
         titleMedium = TextStyle(
-            fontFamily = family,
+            fontFamily = displayFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 16.sp,
             lineHeight = 22.sp,
             letterSpacing = 0.1.sp
         ),
         titleSmall = TextStyle(
-            fontFamily = family,
+            fontFamily = bodyFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
             lineHeight = 20.sp,
             letterSpacing = 0.1.sp
         ),
         bodyLarge = TextStyle(
-            fontFamily = family,
+            fontFamily = bodyFamily,
             fontWeight = FontWeight.Normal,
             fontSize = 16.sp,
             lineHeight = 24.sp,
             letterSpacing = 0.15.sp
         ),
         bodyMedium = TextStyle(
-            fontFamily = family,
+            fontFamily = bodyFamily,
             fontWeight = FontWeight.Normal,
             fontSize = 14.sp,
             lineHeight = 20.sp,
             letterSpacing = 0.15.sp
         ),
         bodySmall = TextStyle(
-            fontFamily = family,
+            fontFamily = bodyFamily,
             fontWeight = FontWeight.Normal,
             fontSize = 12.sp,
             lineHeight = 16.sp,
             letterSpacing = 0.2.sp
         ),
         labelLarge = TextStyle(
-            fontFamily = family,
+            fontFamily = bodyFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
             lineHeight = 20.sp,
             letterSpacing = 0.1.sp
         ),
         labelMedium = TextStyle(
-            fontFamily = family,
+            fontFamily = monoLabelFamily,
             fontWeight = FontWeight.Medium,
             fontSize = 12.sp,
             lineHeight = 16.sp,
             letterSpacing = 0.25.sp
         ),
         labelSmall = TextStyle(
-            fontFamily = family,
+            fontFamily = monoLabelFamily,
             fontWeight = FontWeight.Medium,
             fontSize = 11.sp,
             lineHeight = 14.sp,

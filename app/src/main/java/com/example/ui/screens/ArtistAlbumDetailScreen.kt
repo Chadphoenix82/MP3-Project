@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -47,6 +48,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,11 +56,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.data.db.TrackEntity
 import com.example.ui.components.AudioFormatBadge
 import com.example.ui.components.PhotonAlbumArt
@@ -100,6 +108,18 @@ fun ArtistAlbumDetailScreen(
     BackHandler(onBack = onBack)
 
     val photonColors = LocalPhotonColors.current
+    val context = LocalContext.current
+    val listState = rememberLazyListState()
+
+    val parallaxOffsetPx by remember {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex == 0) {
+                listState.firstVisibleItemScrollOffset.toFloat()
+            } else {
+                420f
+            }
+        }
+    }
 
     val matchedTracks = remember(target, allTracks) {
         when (target) {
@@ -166,19 +186,56 @@ fun ArtistAlbumDetailScreen(
     }
 
     LazyColumn(
+        state = listState,
         modifier = modifier
             .fillMaxSize()
             .testTag("artist_album_detail_screen"),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 156.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1. Hero Header Card
+        // 1. Parallax Hero Cover Header Card
         item(key = "collection_hero") {
             Surface(
                 shape = RoundedCornerShape(24.dp),
                 color = photonColors.glassSurface,
                 border = BorderStroke(1.1.dp, photonColors.photonGlow.copy(alpha = 0.55f))
             ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    // Parallax ambient backdrop banner
+                    if (!heroArtwork.isNullOrBlank()) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(heroArtwork)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(210.dp)
+                                .graphicsLayer {
+                                    translationY = parallaxOffsetPx * 0.42f
+                                    val s = 1f + (parallaxOffsetPx / 1800f).coerceIn(0f, 0.14f)
+                                    scaleX = s
+                                    scaleY = s
+                                    alpha = (0.34f - (parallaxOffsetPx / 1600f)).coerceIn(0.08f, 0.34f)
+                                }
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(210.dp)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        photonColors.photonGlow.copy(alpha = 0.14f),
+                                        photonColors.glassSurface.copy(alpha = 0.92f)
+                                    )
+                                )
+                            )
+                    )
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -196,9 +253,12 @@ fun ArtistAlbumDetailScreen(
                                 is CollectionDetailTarget.Artist -> "Artwork for ${target.artistName}"
                                 is CollectionDetailTarget.Album -> "Cover art for ${target.albumName}"
                             },
-                            size = 108.dp,
-                            cornerRadius = if (target is CollectionDetailTarget.Artist) 54.dp else 20.dp,
-                            showPhotonRing = true
+                            size = 112.dp,
+                            cornerRadius = if (target is CollectionDetailTarget.Artist) 56.dp else 20.dp,
+                            showPhotonRing = true,
+                            modifier = Modifier.graphicsLayer {
+                                translationY = parallaxOffsetPx * 0.14f
+                            }
                         )
 
                         Column(
@@ -373,6 +433,7 @@ fun ArtistAlbumDetailScreen(
                             Text("Edit Album Metadata & Cover", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold))
                         }
                     }
+                }
                 }
             }
         }

@@ -45,6 +45,7 @@ class PhotonPlayerController(private val context: Context) {
     private var cachedBassStrength: Int = 380
     private var cachedVirtualizerStrength: Int = 320
     private var cachedStudioDsp: StudioDspConfig = StudioDspConfig()
+    private var cachedGaplessPlayback: Boolean = true
 
     fun connect() {
         if (controllerFuture != null) return
@@ -84,6 +85,7 @@ class PhotonPlayerController(private val context: Context) {
             virtualizer = cachedVirtualizerStrength
         )
         service.updateStudioDsp(cachedStudioDsp)
+        service.setGaplessPlaybackEnabled(cachedGaplessPlayback)
     }
 
     private fun withService(block: (PhotonPlaybackService) -> Unit) {
@@ -96,8 +98,8 @@ class PhotonPlayerController(private val context: Context) {
         }
     }
 
-    fun playQueue(tracks: List<TrackEntity>, startIndex: Int) {
-        withService { it.playQueue(tracks, startIndex) }
+    fun playQueue(tracks: List<TrackEntity>, startIndex: Int, sourceLabel: String = "Library") {
+        withService { it.playQueue(tracks, startIndex, sourceLabel) }
     }
 
     fun togglePlayPause() {
@@ -133,6 +135,12 @@ class PhotonPlayerController(private val context: Context) {
     fun setCrossfadeCurve(curve: CrossfadeCurveShape) {
         cachedCrossfadeCurve = curve
         PhotonPlaybackBridge.serviceInstance?.setCrossfadeCurve(curve)
+    }
+
+    fun setGaplessPlaybackEnabled(enabled: Boolean) {
+        cachedGaplessPlayback = enabled
+        PhotonPlaybackBridge.updateState { it.copy(gaplessPlaybackEnabled = enabled) }
+        PhotonPlaybackBridge.serviceInstance?.setGaplessPlaybackEnabled(enabled)
     }
 
     fun updatePlaybackOptions(

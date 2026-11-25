@@ -25,6 +25,7 @@ import com.example.data.model.WidgetThemeMode
 import com.example.ui.theme.AppFontChoice
 import com.example.ui.theme.AppWallpaperPreset
 import com.example.ui.theme.CosmicThemeSkin
+import com.example.ui.theme.DeckStylePreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -96,7 +97,10 @@ data class AppSettings(
     val widgetThemeMode: WidgetThemeMode = WidgetThemeMode.APP_THEME,
     val widgetGlassOpacity: Float = 0.88f,
     val hasApiPassword: Boolean = false,
-    val searchHistory: List<String> = emptyList()
+    val searchHistory: List<String> = emptyList(),
+    val minTrackDurationSec: Int = 0,
+    val gaplessPlaybackEnabled: Boolean = true,
+    val deckStylePreset: DeckStylePreset? = null
 ) {
     fun toStudioDspConfig(trackGainOffsetDb: Float = 0f): StudioDspConfig = StudioDspConfig(
         preAmpDb = preAmpDb,
@@ -181,6 +185,9 @@ class SettingsRepository(private val context: Context) {
         val API_PASSWORD_HASH = stringPreferencesKey("api_password_hash")
         val API_PASSWORD_SALT = stringPreferencesKey("api_password_salt")
         val SEARCH_HISTORY_JSON = stringPreferencesKey("search_history_json")
+        val MIN_TRACK_DURATION_SEC = intPreferencesKey("min_track_duration_sec")
+        val GAPLESS_PLAYBACK = booleanPreferencesKey("gapless_playback")
+        val DECK_STYLE_PRESET = stringPreferencesKey("deck_style_preset")
     }
 
     val settingsFlow: Flow<AppSettings> = context.photonDataStore.data.map { prefs ->
@@ -236,6 +243,10 @@ class SettingsRepository(private val context: Context) {
             ReplayGainMode.valueOf(prefs[Keys.REPLAY_GAIN_MODE] ?: ReplayGainMode.TRACK.name)
         }.getOrDefault(ReplayGainMode.TRACK)
 
+        val deckStylePreset = prefs[Keys.DECK_STYLE_PRESET]
+            ?.takeIf { it.isNotBlank() }
+            ?.let { raw -> runCatching { DeckStylePreset.valueOf(raw) }.getOrNull() }
+
         AppSettings(
             darkMode = prefs[Keys.DARK_MODE] ?: true,
             cosmicThemeSkin = cosmicSkin,
@@ -290,7 +301,10 @@ class SettingsRepository(private val context: Context) {
             widgetThemeMode = widgetThemeMode,
             widgetGlassOpacity = (prefs[Keys.WIDGET_GLASS_OPACITY] ?: 0.88f).coerceIn(0.45f, 1.0f),
             hasApiPassword = !prefs[Keys.API_PASSWORD_HASH].isNullOrBlank() && !prefs[Keys.API_PASSWORD_SALT].isNullOrBlank(),
-            searchHistory = parseSearchHistoryJson(prefs[Keys.SEARCH_HISTORY_JSON])
+            searchHistory = parseSearchHistoryJson(prefs[Keys.SEARCH_HISTORY_JSON]),
+            minTrackDurationSec = (prefs[Keys.MIN_TRACK_DURATION_SEC] ?: 0).coerceIn(0, 180),
+            gaplessPlaybackEnabled = prefs[Keys.GAPLESS_PLAYBACK] ?: true,
+            deckStylePreset = deckStylePreset
         )
     }
 
@@ -316,7 +330,31 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun setAppFont(font: AppFontChoice) {
-        context.photonDataStore.edit { it[Keys.APP_FONT] = font.name }
+        context.photonDataStore.edit {
+            it[Keys.APP_FONT] = font.name
+            it.remove(Keys.DECK_STYLE_PRESET)
+        }
+    }
+
+    suspend fun applyDeckStylePreset(preset: DeckStylePreset) {
+        context.photonDataStore.edit {
+            it[Keys.DECK_STYLE_PRESET] = preset.name
+            it[Keys.APP_FONT] = preset.displayFont.name
+            it[Keys.COSMIC_THEME_SKIN] = preset.recommendedSkin.name
+            it[Keys.DARK_MODE] = preset.darkMode
+        }
+    }
+
+    suspend fun setMinTrackDurationSec(seconds: Int) {
+        context.photonDataStore.edit {
+            it[Keys.MIN_TRACK_DURATION_SEC] = seconds.coerceIn(0, 180)
+        }
+    }
+
+    suspend fun setGaplessPlaybackEnabled(enabled: Boolean) {
+        context.photonDataStore.edit {
+            it[Keys.GAPLESS_PLAYBACK] = enabled
+        }
     }
 
     suspend fun setWallpaperPreset(preset: AppWallpaperPreset) {

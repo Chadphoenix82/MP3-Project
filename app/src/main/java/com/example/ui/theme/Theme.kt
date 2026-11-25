@@ -422,6 +422,7 @@ fun PhotonAudioTheme(
     customSecondaryArgb: Long = 0xFF9D7BFF,
     customOledBlack: Boolean = false,
     fontChoice: AppFontChoice = AppFontChoice.PUBLIC_SANS,
+    deckStylePreset: DeckStylePreset? = null,
     wallpaperConfig: PhotonWallpaperConfig = PhotonWallpaperConfig(),
     content: @Composable () -> Unit
 ) {
@@ -444,7 +445,7 @@ fun PhotonAudioTheme(
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = photonTypographyFor(fontChoice),
+            typography = photonTypographyFor(fontChoice, deckStylePreset),
             content = content
         )
     }

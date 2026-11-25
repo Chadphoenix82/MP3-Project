@@ -17,10 +17,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +63,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Loop
+import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -155,6 +157,7 @@ fun PhotonMiniPlayerBar(
     val photonColors = LocalPhotonColors.current
     val haptic = LocalHapticFeedback.current
     var dragAccumX by remember { mutableFloatStateOf(0f) }
+    var dragAccumY by remember { mutableFloatStateOf(0f) }
 
     val progress = if (playbackState.durationMs > 0L) {
         (playbackState.positionMs.toFloat() / playbackState.durationMs.toFloat()).coerceIn(0f, 1f)
@@ -167,18 +170,33 @@ fun PhotonMiniPlayerBar(
             .testTag("mini_player_bar")
             .pointerInput(track.id, gestureControlsEnabled) {
                 if (!gestureControlsEnabled) return@pointerInput
-                detectHorizontalDragGestures(
-                    onDragStart = { dragAccumX = 0f },
-                    onHorizontalDrag = { _, dragAmount -> dragAccumX += dragAmount },
+                detectDragGestures(
+                    onDragStart = {
+                        dragAccumX = 0f
+                        dragAccumY = 0f
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        dragAccumX += dragAmount.x
+                        dragAccumY += dragAmount.y
+                    },
                     onDragEnd = {
-                        if (dragAccumX < -90f) {
+                        if (dragAccumY < -65f && abs(dragAccumY) > abs(dragAccumX)) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onExpandClick()
+                        } else if (dragAccumX < -90f && abs(dragAccumX) >= abs(dragAccumY)) {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onSkipNext()
-                        } else if (dragAccumX > 90f) {
+                        } else if (dragAccumX > 90f && abs(dragAccumX) >= abs(dragAccumY)) {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onSkipPrevious()
                         }
                         dragAccumX = 0f
+                        dragAccumY = 0f
+                    },
+                    onDragCancel = {
+                        dragAccumX = 0f
+                        dragAccumY = 0f
                     }
                 )
             }
@@ -222,8 +240,9 @@ fun PhotonMiniPlayerBar(
                             text = track.title,
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .basicMarquee(iterations = Int.MAX_VALUE)
                         )
                         AudioFormatBadge(format = track.format)
                     }
@@ -236,8 +255,7 @@ fun PhotonMiniPlayerBar(
                         style = MaterialTheme.typography.bodySmall,
                         color = if (playbackState.isCrossfading) photonColors.photonGlow else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = if (!playbackState.isCrossfading && onNavigateToArtist != null && track.artist.isNotBlank()) {
+                        modifier = (if (!playbackState.isCrossfading && onNavigateToArtist != null && track.artist.isNotBlank()) {
                             Modifier
                                 .clip(RoundedCornerShape(6.dp))
                                 .clickable { onNavigateToArtist(track.artist) }
@@ -245,7 +263,7 @@ fun PhotonMiniPlayerBar(
                                 .testTag("mini_player_artist_link")
                         } else {
                             Modifier
-                        }
+                        }).basicMarquee(iterations = Int.MAX_VALUE)
                     )
                 }
 
@@ -332,7 +350,10 @@ fun NowPlayingScreen(
     onClearAbLoop: () -> Unit,
     onUpdateTrackSoundProfile: (TrackEntity, Float, String?) -> Unit = { _, _, _ -> },
     onNavigateToArtist: (String) -> Unit = {},
-    onNavigateToAlbum: (albumName: String, preferredArtist: String?) -> Unit = { _, _ -> }
+    onNavigateToAlbum: (albumName: String, preferredArtist: String?) -> Unit = { _, _ -> },
+    onOpenQueueScreen: (() -> Unit)? = null,
+    onOpenLyricsInspector: ((Long) -> Unit)? = null,
+    onOpenAudioLab: (() -> Unit)? = null
 ) {
     BackHandler(onBack = onCollapse)
 
@@ -418,11 +439,51 @@ fun NowPlayingScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Top Bar
+            // Swipe-Down Dismissal Pill + Top Bar
+            var headerDismissDragY by remember { mutableFloatStateOf(0f) }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragStart = { headerDismissDragY = 0f },
+                            onVerticalDrag = { _, dragAmount ->
+                                if (dragAmount > 0f) headerDismissDragY += dragAmount
+                            },
+                            onDragEnd = {
+                                if (headerDismissDragY > 80f) onCollapse()
+                                headerDismissDragY = 0f
+                            },
+                            onDragCancel = { headerDismissDragY = 0f }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(42.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(photonColors.photonGlow.copy(alpha = 0.45f))
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 560.dp),
+                    .widthIn(max = 560.dp)
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragStart = { headerDismissDragY = 0f },
+                            onVerticalDrag = { _, dragAmount ->
+                                if (dragAmount > 0f) headerDismissDragY += dragAmount
+                            },
+                            onDragEnd = {
+                                if (headerDismissDragY > 85f) onCollapse()
+                                headerDismissDragY = 0f
+                            },
+                            onDragCancel = { headerDismissDragY = 0f }
+                        )
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -906,8 +967,8 @@ fun NowPlayingScreen(
                     ) {
                         AudioFormatBadge(format = track.format)
                         Text(
-                            text = "${signalInfo.sourceBitDepthBits}-bit · ${formatSampleRate(displayRateHz)} · $displayBitrate kbps",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                            text = "${signalInfo.sourceBitDepthBits}-bit/${formatSampleRate(displayRateHz)} • $displayBitrate kbps",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -992,12 +1053,24 @@ fun NowPlayingScreen(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (playbackState.abLoopStartMs != null) {
                         Surface(
-                            onClick = { showStudioSheet = true },
+                            onClick = {
+                                when {
+                                    playbackState.abLoopActive -> onClearAbLoop()
+                                    playbackState.abLoopStartMs != null -> onSetAbLoopEnd()
+                                    else -> onSetAbLoopStart()
+                                }
+                            },
                             shape = RoundedCornerShape(10.dp),
-                            color = photonColors.goldBadge.copy(alpha = 0.16f),
-                            border = BorderStroke(0.9.dp, photonColors.goldBadge.copy(alpha = 0.7f)),
+                            color = if (playbackState.abLoopStartMs != null) {
+                                photonColors.goldBadge.copy(alpha = 0.16f)
+                            } else {
+                                photonColors.glassSurface
+                            },
+                            border = BorderStroke(
+                                0.9.dp,
+                                if (playbackState.abLoopStartMs != null) photonColors.goldBadge.copy(alpha = 0.7f) else photonColors.cardBorder
+                            ),
                             modifier = Modifier.testTag("now_playing_ab_loop_badge")
                         ) {
                             Row(
@@ -1007,28 +1080,21 @@ fun NowPlayingScreen(
                             ) {
                                 Icon(
                                     Icons.Rounded.Loop,
-                                    contentDescription = null,
-                                    tint = photonColors.goldBadge,
+                                    contentDescription = "Toggle A-B Loop",
+                                    tint = if (playbackState.abLoopStartMs != null) photonColors.goldBadge else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(13.dp)
                                 )
                                 Text(
-                                    text = if (playbackState.abLoopActive) {
-                                        "A-B ${formatDurationMs(playbackState.abLoopStartMs)}–${formatDurationMs(playbackState.abLoopEndMs ?: 0L)}"
-                                    } else {
-                                        "Loop A: ${formatDurationMs(playbackState.abLoopStartMs)}"
+                                    text = when {
+                                        playbackState.abLoopActive -> "A-B ${formatDurationMs(playbackState.abLoopStartMs!!)}–${formatDurationMs(playbackState.abLoopEndMs ?: 0L)}"
+                                        playbackState.abLoopStartMs != null -> "Set B (A: ${formatDurationMs(playbackState.abLoopStartMs)})"
+                                        else -> "A-B Loop"
                                     },
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = photonColors.goldBadge
+                                    color = if (playbackState.abLoopStartMs != null) photonColors.goldBadge else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                    } else if (playbackState.sleepTimer.isActive) {
-                        Text(
-                            text = "Sleep: ${playbackState.sleepTimer.label}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = photonColors.goldBadge
-                        )
-                    }
                     Text(
                         text = formatDurationMs(durationMs),
                         style = MaterialTheme.typography.labelMedium,
@@ -1152,12 +1218,7 @@ fun NowPlayingScreen(
                 }
             }
 
-            // Bottom Quick Utility Strip (Queue, Speed/A-B Studio, Signal Inspector, Equalizer, Playlist)
-            val studioModified = abs(settings.playbackSpeed - 1.0f) > 0.02f ||
-                abs(settings.playbackPitch - 1.0f) > 0.02f ||
-                playbackState.abLoopActive ||
-                playbackState.abLoopStartMs != null
-
+            // Bottom Flagship Quick-Action Dock: Queue, Lyrics & Inspector, Audio Lab, Sleep Timer
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1177,38 +1238,49 @@ fun NowPlayingScreen(
                         label = "Queue (${playbackState.queue.size})",
                         tint = photonColors.photonGlow,
                         tag = "now_playing_live_queue_btn",
-                        onClick = { showLiveQueueSheet = true }
-                    )
-                    QuickActionIcon(
-                        icon = Icons.Rounded.Speed,
-                        label = if (playbackState.abLoopActive) "A-B ON" else "Speed/A-B",
-                        tint = if (studioModified) photonColors.goldBadge else photonColors.nebulaAccent,
-                        tag = "now_playing_studio_btn",
-                        onClick = { showStudioSheet = true }
-                    )
-                    QuickActionIcon(
-                        icon = Icons.Rounded.GraphicEq,
-                        label = "Signal",
-                        tint = photonColors.losslessBadge,
-                        tag = "now_playing_signal_btn",
-                        onClick = { showCodecInspector = true }
-                    )
-                    QuickActionIcon(
-                        icon = Icons.Rounded.Equalizer,
-                        label = "Equalizer",
-                        tint = photonColors.nebulaAccent,
-                        tag = "now_playing_eq_btn",
                         onClick = {
-                            onCollapse()
-                            onOpenEqualizer()
+                            if (onOpenQueueScreen != null) {
+                                onCollapse()
+                                onOpenQueueScreen()
+                            } else {
+                                showLiveQueueSheet = true
+                            }
                         }
                     )
                     QuickActionIcon(
-                        icon = Icons.Rounded.PlaylistAdd,
-                        label = "Playlist",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        tag = "now_playing_add_playlist_btn",
-                        onClick = { onAddToPlaylist(track) }
+                        icon = Icons.Rounded.Lyrics,
+                        label = "Lyrics & Info",
+                        tint = photonColors.losslessBadge,
+                        tag = "now_playing_lyrics_inspector_btn",
+                        onClick = {
+                            if (onOpenLyricsInspector != null) {
+                                onCollapse()
+                                onOpenLyricsInspector(track.id)
+                            } else {
+                                showCodecInspector = true
+                            }
+                        }
+                    )
+                    QuickActionIcon(
+                        icon = Icons.Rounded.Equalizer,
+                        label = "Audio Lab",
+                        tint = photonColors.nebulaAccent,
+                        tag = "now_playing_audio_lab_btn",
+                        onClick = {
+                            if (onOpenAudioLab != null) {
+                                onOpenAudioLab()
+                            } else {
+                                onCollapse()
+                                onOpenEqualizer()
+                            }
+                        }
+                    )
+                    QuickActionIcon(
+                        icon = Icons.Rounded.Bedtime,
+                        label = if (playbackState.sleepTimer.isActive) playbackState.sleepTimer.label else "Sleep",
+                        tint = if (playbackState.sleepTimer.isActive) photonColors.goldBadge else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tag = "now_playing_dock_sleep_btn",
+                        onClick = onOpenSleepTimer
                     )
                 }
             }

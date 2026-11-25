@@ -5,6 +5,7 @@ import com.example.data.db.PhotonDatabase
 import com.example.data.library.AudioImporter
 import com.example.data.library.FolderMonitorManager
 import com.example.data.library.LibraryRepository
+import com.example.data.library.LyricsRepository
 import com.example.data.library.StudioWavGenerator
 import com.example.data.network.GitHubUpdateChecker
 import com.example.data.network.MetadataAutoCompleteRepository
@@ -44,6 +45,7 @@ class PhotonApplication : Application() {
             settingsRepository = settingsRepository,
             wavGenerator = wavGenerator
         )
+        val lyricsRepository = LyricsRepository(database.trackDao())
         libraryRepository = LibraryRepository(
             trackDao = database.trackDao(),
             playlistDao = database.playlistDao(),
@@ -55,7 +57,8 @@ class PhotonApplication : Application() {
             folderMonitorManager = folderMonitorManager,
             wavGenerator = wavGenerator,
             settingsRepository = settingsRepository,
-            replayGainAnalyzer = replayGainAnalyzer
+            replayGainAnalyzer = replayGainAnalyzer,
+            lyricsRepository = lyricsRepository
         )
         playerController = PhotonPlayerController(this)
         libraryRepository.startFolderMonitoring()

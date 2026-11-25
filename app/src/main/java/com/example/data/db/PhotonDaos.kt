@@ -176,6 +176,9 @@ interface TrackDao {
     @Query("UPDATE tracks SET replayGainAlbumDb = :albumGainDb, replayGainAlbumPeak = :albumPeak WHERE album = :albumName")
     suspend fun updateAlbumLoudness(albumName: String, albumGainDb: Float, albumPeak: Float)
 
+    @Query("UPDATE tracks SET lyricsLrc = :lyricsLrc WHERE id = :trackId")
+    suspend fun updateLyrics(trackId: Long, lyricsLrc: String)
+
     @Query("DELETE FROM tracks WHERE id = :trackId")
     suspend fun deleteTrack(trackId: Long)
 
@@ -200,6 +203,17 @@ interface PlaylistDao {
         """
     )
     fun observePlaylistsWithSummary(): Flow<List<PlaylistWithSummary>>
+
+    @Query(
+        """
+        SELECT pt.playlistId AS playlistId, t.artworkUri AS artworkUri
+        FROM playlist_tracks pt
+        INNER JOIN tracks t ON t.id = pt.trackId
+        WHERE t.artworkUri IS NOT NULL AND t.artworkUri != ''
+        ORDER BY pt.playlistId ASC, pt.position ASC
+        """
+    )
+    fun observeAllPlaylistArtworks(): Flow<List<PlaylistArtworkRow>>
 
     @Query(
         """

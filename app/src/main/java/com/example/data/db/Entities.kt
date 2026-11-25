@@ -40,7 +40,8 @@ data class TrackEntity(
     val replayGainTrackPeak: Float? = null,
     val replayGainAlbumPeak: Float? = null,
     val integratedLufs: Float? = null,
-    val replayGainSource: String = ""
+    val replayGainSource: String = "",
+    val lyricsLrc: String = ""
 )
 
 @Entity(tableName = "playlists")
@@ -92,6 +93,11 @@ data class PlaylistWithSummary(
     val createdAt: Long,
     val trackCount: Int,
     val coverUri: String?
+)
+
+data class PlaylistArtworkRow(
+    val playlistId: Long,
+    val artworkUri: String
 )
 
 @Entity(

@@ -16,13 +16,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,47 +26,34 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Bedtime
-import androidx.compose.material.icons.rounded.DarkMode
-import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.Equalizer
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
-import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.OpenInNew
-import androidx.compose.material.icons.rounded.QueueMusic
-import androidx.compose.material.icons.rounded.Radar
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SystemUpdate
-import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationDrawerItem
-import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -79,79 +62,75 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.ui.NavDisplay
 import com.example.data.db.TrackEntity
 import com.example.ui.PhotonViewModel
 import com.example.ui.components.GalaxyBackdrop
+import com.example.ui.navigation.PhotonDeepLinks
+import com.example.ui.navigation.PhotonNavKey
 import com.example.ui.screens.ArtistAlbumDetailScreen
+import com.example.ui.screens.AudioLabModalSheet
 import com.example.ui.screens.CollectionDetailTarget
-import com.example.ui.screens.EqualizerScreen
-import com.example.ui.screens.LibraryScreen
-import com.example.ui.screens.ListeningStatsScreen
-import com.example.ui.screens.MetadataEditorMode
-import com.example.ui.screens.MetadataEditorScreen
+import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.LibraryBrowserScreen
+import com.example.ui.screens.LyricsInspectorScreen
 import com.example.ui.screens.NowPlayingScreen
 import com.example.ui.screens.PhotonMiniPlayerBar
 import com.example.ui.screens.PickPlaylistForTrackDialog
-import com.example.ui.screens.PlaylistsScreen
+import com.example.ui.screens.PlaylistsHubScreen
+import com.example.ui.screens.QueueScreen
+import com.example.ui.screens.SearchScreen
 import com.example.ui.screens.SettingsAndFoldersScreen
 import com.example.ui.screens.SleepTimerModalDialog
-import com.example.ui.screens.SmartQueueScreen
-import com.example.ui.theme.AppWallpaperPreset
 import com.example.ui.theme.LocalPhotonColors
 import com.example.ui.theme.PhotonAudioTheme
 import com.example.ui.theme.PhotonWallpaperConfig
-import java.io.File
 import kotlinx.coroutines.launch
 
-enum class DrawerDestination(
+private enum class TopLevelTab(
+    val key: PhotonNavKey,
     val label: String,
-    val description: String,
-    val icon: ImageVector
+    val icon: ImageVector,
+    val tag: String
 ) {
-    LIBRARY("Library", "Music Library, Genre Folders & Playlists", Icons.Rounded.LibraryMusic),
-    PLAYLISTS("Playlists", "Custom playlists & drag-and-drop sorting", Icons.Rounded.QueueMusic),
-    STATS("Listening Stats", "Most played tracks, top genres & favorites", Icons.Rounded.BarChart),
-    SMART_QUEUE("Smart Queue", "Listening history & genre recommendations", Icons.Rounded.AutoAwesome),
-    METADATA_EDITOR("Metadata Editor", "Edit tags, album covers & exact web lookup", Icons.Rounded.EditNote),
-    EQUALIZER("Equalizer", "10-band studio EQ, mastering DSP & reverb", Icons.Rounded.Equalizer),
-    SETTINGS("Settings", "Theme, widgets, font, wallpaper & scanner", Icons.Rounded.Tune)
+    HOME(PhotonNavKey.HomeKey, "Home", Icons.Rounded.Home, "nav_tab_home"),
+    LIBRARY(PhotonNavKey.LibraryKey, "Library", Icons.Rounded.LibraryMusic, "nav_tab_library"),
+    PLAYLISTS(PhotonNavKey.PlaylistsKey, "Playlists", Icons.AutoMirrored.Rounded.QueueMusic, "nav_tab_playlists"),
+    SEARCH(PhotonNavKey.SearchKey, "Search", Icons.Rounded.Search, "nav_tab_search")
 }
 
 class MainActivity : ComponentActivity() {
+
+    private var pendingDeepLinkTarget by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        pendingDeepLinkTarget = extractDeepLinkTarget(intent)
 
         val app = application as PhotonApplication
         val factory = PhotonViewModel.Factory(
@@ -172,21 +151,53 @@ class MainActivity : ComponentActivity() {
                 customSecondaryArgb = settings.customAccentSecondaryArgb,
                 customOledBlack = settings.customOledBlackBg,
                 fontChoice = settings.appFont,
+                deckStylePreset = settings.deckStylePreset,
                 wallpaperConfig = PhotonWallpaperConfig(
                     preset = settings.wallpaperPreset,
                     customPhotoPath = settings.customWallpaperPath,
                     dimAlpha = settings.wallpaperDimAlpha
                 )
             ) {
-                PhotonAudioRoot(viewModel = viewModel)
+                PhotonAudioDeckRoot(
+                    viewModel = viewModel,
+                    pendingDeepLink = pendingDeepLinkTarget,
+                    onConsumeDeepLink = { pendingDeepLinkTarget = null }
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        extractDeepLinkTarget(intent)?.let { target ->
+            pendingDeepLinkTarget = target
+        }
+    }
+
+    private fun extractDeepLinkTarget(intent: Intent?): String? {
+        if (intent == null) return null
+        val extra = intent.getStringExtra(PhotonDeepLinks.EXTRA_TARGET)
+        if (!extra.isNullOrBlank()) return extra
+        val data = intent.data ?: return null
+        if (data.scheme == "photonaudio" && data.host == "deck") {
+            return when (data.path?.trim('/')) {
+                "now-playing" -> PhotonDeepLinks.TARGET_NOW_PLAYING
+                "library" -> PhotonDeepLinks.TARGET_LIBRARY
+                else -> null
+            }
+        }
+        return null
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
+private fun PhotonAudioDeckRoot(
+    viewModel: PhotonViewModel,
+    pendingDeepLink: String?,
+    onConsumeDeepLink: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -196,20 +207,18 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     val monitorStatus by viewModel.monitorStatus.collectAsStateWithLifecycle()
     val tracks by viewModel.filteredSortedTracks.collectAsStateWithLifecycle()
     val allTracks by viewModel.allTracks.collectAsStateWithLifecycle()
-    val favoriteTracks by viewModel.favoriteTracks.collectAsStateWithLifecycle()
+    val recentlyAddedTracks by viewModel.recentlyAddedTracks.collectAsStateWithLifecycle()
     val recentlyPlayedTracks by viewModel.recentlyPlayedTracks.collectAsStateWithLifecycle()
     val mostPlayedTracks by viewModel.mostPlayedTracks.collectAsStateWithLifecycle()
-    val genrePlayStats by viewModel.genrePlayStats.collectAsStateWithLifecycle()
-    val artistPlayStats by viewModel.artistPlayStats.collectAsStateWithLifecycle()
+    val forgottenFavorites by viewModel.forgottenFavorites.collectAsStateWithLifecycle()
+    val trackPlayCountMap by viewModel.trackPlayCountMap.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+    val playlistCollages by viewModel.playlistCollageArtworks.collectAsStateWithLifecycle()
     val watchedFolders by viewModel.watchedFolders.collectAsStateWithLifecycle()
     val excludedFolders by viewModel.excludedFolders.collectAsStateWithLifecycle()
     val selectedPlaylistId by viewModel.selectedPlaylistId.collectAsStateWithLifecycle()
     val selectedPlaylistTracks by viewModel.selectedPlaylistTracks.collectAsStateWithLifecycle()
-    val smartQueueSuggestions by viewModel.smartQueueSuggestions.collectAsStateWithLifecycle()
-    val totalPlayCount by viewModel.totalPlayCount.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
-    val editorSelectedTrackId by viewModel.editorSelectedTrackId.collectAsStateWithLifecycle()
     val editorSearchState by viewModel.editorSearchState.collectAsStateWithLifecycle()
     val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
@@ -217,79 +226,66 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
     val isApiUnlocked by viewModel.isApiUnlocked.collectAsStateWithLifecycle()
     val replayGainScanProgress by viewModel.replayGainScanProgress.collectAsStateWithLifecycle()
 
-    var currentDestination by remember { mutableStateOf(DrawerDestination.LIBRARY) }
-    var libraryActivePage by remember { mutableIntStateOf(0) }
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    // User-owned Jetpack Navigation 3 SnapshotStateList back stack
+    val backStack = remember { mutableStateListOf<PhotonNavKey>(PhotonNavKey.HomeKey) }
+    val currentKey = backStack.lastOrNull() ?: PhotonNavKey.HomeKey
+    val isTopLevel = currentKey in listOf(
+        PhotonNavKey.HomeKey,
+        PhotonNavKey.LibraryKey,
+        PhotonNavKey.PlaylistsKey,
+        PhotonNavKey.SearchKey
+    )
 
     var nowPlayingExpanded by remember { mutableStateOf(false) }
-    var collectionBackStack by remember { mutableStateOf<List<CollectionDetailTarget>>(emptyList()) }
-    var editorInitialMode by remember { mutableStateOf(MetadataEditorMode.SINGLE) }
+    var showAudioLabSheet by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var trackForPlaylistPicker by remember { mutableStateOf<TrackEntity?>(null) }
     var apiPasswordDialogMode by remember { mutableStateOf<ApiPasswordDialogMode?>(null) }
 
-    val activeCollectionDetail = collectionBackStack.lastOrNull()
-
-    // Cover Art Photo Picker tracking
+    // Cover Art & M3U8 SAF pending state
     var pendingCoverTrackId by remember { mutableStateOf<Long?>(null) }
     var pickedCoverOverrideUri by remember { mutableStateOf<String?>(null) }
+    var pendingM3u8Export by remember { mutableStateOf<Pair<String, List<TrackEntity>>?>(null) }
 
-    val navigateTo: (DrawerDestination) -> Unit = { target ->
-        collectionBackStack = emptyList()
-        if (target == DrawerDestination.METADATA_EDITOR) {
-            editorInitialMode = MetadataEditorMode.SINGLE
+    val switchTopLevelTab: (PhotonNavKey) -> Unit = { tabKey ->
+        nowPlayingExpanded = false
+        if (backStack.size != 1 || backStack.firstOrNull() != tabKey) {
+            backStack.clear()
+            backStack.add(tabKey)
         }
-        currentDestination = target
-        scope.launch { drawerState.close() }
     }
 
-    val openArtistDetail: (String) -> Unit = { artistName ->
-        if (artistName.isNotBlank()) {
-            nowPlayingExpanded = false
-            val target = CollectionDetailTarget.Artist(artistName)
-            collectionBackStack = if (collectionBackStack.lastOrNull() == target) {
-                collectionBackStack
-            } else {
-                collectionBackStack + target
+    val pushRoute: (PhotonNavKey) -> Unit = { key ->
+        nowPlayingExpanded = false
+        if (backStack.lastOrNull() != key) {
+            backStack.add(key)
+        }
+    }
+
+    val popBack: () -> Unit = {
+        if (backStack.size > 1) {
+            backStack.removeLastOrNull()
+        } else if (backStack.firstOrNull() != PhotonNavKey.HomeKey) {
+            backStack.clear()
+            backStack.add(PhotonNavKey.HomeKey)
+        }
+    }
+
+    // Handle widget deep links (Artwork -> Expanded Now Playing Deck, Library icon -> LibraryKey)
+    LaunchedEffect(pendingDeepLink) {
+        when (pendingDeepLink) {
+            PhotonDeepLinks.TARGET_NOW_PLAYING -> {
+                nowPlayingExpanded = true
+                onConsumeDeepLink()
+            }
+            PhotonDeepLinks.TARGET_LIBRARY -> {
+                switchTopLevelTab(PhotonNavKey.LibraryKey)
+                onConsumeDeepLink()
             }
         }
     }
 
-    val openAlbumDetail: (String, String?) -> Unit = { albumName, preferredArtist ->
-        if (albumName.isNotBlank()) {
-            nowPlayingExpanded = false
-            val target = CollectionDetailTarget.Album(albumName, preferredArtist)
-            collectionBackStack = if (collectionBackStack.lastOrNull() == target) {
-                collectionBackStack
-            } else {
-                collectionBackStack + target
-            }
-        }
-    }
-
-    val popCollectionDetail: () -> Unit = {
-        if (collectionBackStack.isNotEmpty()) {
-            collectionBackStack = collectionBackStack.dropLast(1)
-        }
-    }
-
-    val openTrackInMetadataEditor: (TrackEntity) -> Unit = { track ->
-        viewModel.selectTrackForEditor(track)
-        editorInitialMode = MetadataEditorMode.SINGLE
-        collectionBackStack = emptyList()
-        nowPlayingExpanded = false
-        currentDestination = DrawerDestination.METADATA_EDITOR
-    }
-
-    val openAlbumInMetadataEditor: (String, TrackEntity) -> Unit = { _, anchorTrack ->
-        viewModel.selectTrackForEditor(anchorTrack)
-        editorInitialMode = MetadataEditorMode.ALBUM
-        collectionBackStack = emptyList()
-        nowPlayingExpanded = false
-        currentDestination = DrawerDestination.METADATA_EDITOR
-    }
-
-    // Apply "Keep Screen On" setting to Activity window cleanly
+    // Keep Screen On window flag
     DisposableEffect(settings.keepScreenOn) {
         val window = (context as? Activity)?.window
         if (settings.keepScreenOn) {
@@ -302,23 +298,12 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
         }
     }
 
-    // Close navigation drawer on back press if open
-    BackHandler(enabled = drawerState.isOpen) {
-        scope.launch { drawerState.close() }
+    // Predictive-friendly back handling for modal overlay
+    BackHandler(enabled = nowPlayingExpanded) {
+        nowPlayingExpanded = false
     }
 
-    // Return to Library from secondary screens on back press
-    BackHandler(
-        enabled = !drawerState.isOpen &&
-            !nowPlayingExpanded &&
-            activeCollectionDetail == null &&
-            currentDestination != DrawerDestination.LIBRARY &&
-            selectedPlaylistId == null
-    ) {
-        currentDestination = DrawerDestination.LIBRARY
-    }
-
-    // Request POST_NOTIFICATIONS politely on Android 13+ for media notification controls
+    // Request POST_NOTIFICATIONS politely on Android 13+
     val notifPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { }
@@ -341,30 +326,38 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
         }
     }
 
-    // Zero-permission SAF multi-file audio importer (MP3, FLAC, WAV)
+    // Zero-permission SAF launchers
     val importFilesLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        if (uris.isNotEmpty()) {
-            viewModel.importAudioFiles(uris)
+        if (uris.isNotEmpty()) viewModel.importAudioFiles(uris)
+    }
+    val watchFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri -> treeUri?.let { viewModel.addWatchedFolder(it) } }
+
+    val excludeFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri -> treeUri?.let { viewModel.addExcludedSafFolder(it) } }
+
+    val exportM3u8Launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("audio/x-mpegurl")
+    ) { uri ->
+        val pending = pendingM3u8Export
+        if (uri != null && pending != null) {
+            viewModel.exportPlaylistToM3u8(context, uri, pending.first, pending.second)
+        }
+        pendingM3u8Export = null
+    }
+
+    val importM3u8Launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importPlaylistFromM3u8(context, uri)
         }
     }
 
-    // Zero-permission SAF watched folder picker
-    val watchFolderLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { treeUri ->
-        treeUri?.let { viewModel.addWatchedFolder(it) }
-    }
-
-    // Zero-permission SAF excluded folder picker
-    val excludeFolderLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { treeUri ->
-        treeUri?.let { viewModel.addExcludedSafFolder(it) }
-    }
-
-    // Zero-permission Android Photo Picker for selecting local album cover art
     val albumCoverPhotoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -377,34 +370,24 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
         pendingCoverTrackId = null
     }
 
+    val customWallpaperPhotoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) viewModel.saveCustomWallpaperPhoto(uri)
+    }
+
     val launchImportAudio = {
         importFilesLauncher.launch(
             arrayOf(
-                "audio/mpeg",
-                "audio/flac",
-                "audio/x-flac",
-                "audio/wav",
-                "audio/x-wav",
-                "audio/opus",
-                "audio/ogg",
-                "audio/mp4",
-                "audio/aac",
-                "audio/x-m4a",
-                "audio/*"
+                "audio/mpeg", "audio/flac", "audio/x-flac",
+                "audio/wav", "audio/x-wav", "audio/opus",
+                "audio/ogg", "audio/mp4", "audio/aac",
+                "audio/x-m4a", "audio/*"
             )
         )
     }
     val launchWatchFolder = { watchFolderLauncher.launch(null) }
     val launchExcludeFolder = { excludeFolderLauncher.launch(null) }
-    // Zero-permission Android Photo Picker for selecting custom app wallpaper
-    val customWallpaperPhotoPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.saveCustomWallpaperPhoto(uri)
-        }
-    }
-
     val launchPickCoverPhoto: (Long) -> Unit = { trackId ->
         pendingCoverTrackId = trackId
         albumCoverPhotoPicker.launch(
@@ -419,563 +402,378 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
 
     val photonColors = LocalPhotonColors.current
 
-    // Standard Compose ModalNavigationDrawer (DrawerLayout + NavigationDrawer pattern)
-    // Disable drawer drag gesture when swiping inside MP3/FLAC/WAV pages so horizontal paging feels seamless
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        gesturesEnabled = !nowPlayingExpanded && (currentDestination != DrawerDestination.LIBRARY || libraryActivePage == 0),
-        drawerContent = {
-            val drawerSelectedBg = lerp(photonColors.backdropMid, photonColors.photonGlow, 0.24f).copy(alpha = 0.92f)
-            val drawerItemBg = photonColors.glassSurface.copy(alpha = 0.88f)
-            val drawerHighlightText = lerp(photonColors.photonGlow, Color.White, 0.22f)
-            ModalDrawerSheet(
-                drawerContainerColor = photonColors.backdropTop,
-                windowInsets = WindowInsets(0, 0, 0, 0),
-                modifier = Modifier
-                    .width(308.dp)
-                    .testTag("navigation_sidebar_drawer")
-            ) {
-                // Full-bleed Wallpaper overlaying underneath all sidebar navigation buttons
-                Box(modifier = Modifier.fillMaxSize()) {
-                    val customWallpaperFile = settings.customWallpaperPath?.let { File(it) }?.takeIf { it.exists() }
-                    when {
-                        settings.wallpaperPreset == AppWallpaperPreset.CUSTOM_PHOTO && customWallpaperFile != null -> {
-                            AsyncImage(
-                                model = ImageRequest.Builder(context)
-                                    .data(customWallpaperFile)
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = "Custom drawer wallpaper",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                        settings.wallpaperPreset == AppWallpaperPreset.PHOTON_PRISM -> {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_photon_deck_hero),
-                                contentDescription = "Photon Prism drawer wallpaper",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                        else -> {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_galaxy_hero),
-                                contentDescription = "Photon Audio galaxy drawer wallpaper",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                    }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        photonColors.backdropTop.copy(alpha = 0.62f),
-                                        photonColors.backdropMid.copy(alpha = 0.78f),
-                                        photonColors.backdropBottom.copy(alpha = 0.90f)
-                                    )
-                                )
-                            )
-                    )
+    val topBarTitle = when (currentKey) {
+        PhotonNavKey.HomeKey -> "Photon Audio"
+        PhotonNavKey.LibraryKey -> "Library"
+        PhotonNavKey.PlaylistsKey -> "Playlists"
+        PhotonNavKey.SearchKey -> "Search"
+        is PhotonNavKey.AlbumDetailKey -> currentKey.albumId
+        is PhotonNavKey.ArtistDetailKey -> currentKey.artistId
+        PhotonNavKey.QueueKey -> "Up Next Queue"
+        is PhotonNavKey.LyricsInspectorKey -> "Lyrics & Inspector"
+        PhotonNavKey.SettingsKey -> "Settings"
+    }
 
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .windowInsetsPadding(WindowInsets.statusBars)
-                            .windowInsetsPadding(WindowInsets.navigationBars)
-                            .padding(bottom = 16.dp)
-                    ) {
-                        // Brand Header floating over the wallpaper with theme-synced frosted contrast
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = photonColors.glassSurface.copy(alpha = 0.88f),
-                            border = BorderStroke(1.dp, photonColors.photonGlow.copy(alpha = 0.45f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 14.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = "Photon Audio",
-                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = Color.White
-                                )
-                                Text(
-                                    text = "${allTracks.size} Tracks · ${playlists.size} Playlists · Local Only",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = photonColors.photonGlow
-                                )
-                            }
-                        }
-
-                        Text(
-                            text = "MENU",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = photonColors.photonGlow,
-                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 6.dp)
-                        )
-
-                        DrawerDestination.entries.forEach { destination ->
-                            val selected = destination == currentDestination
-                            val badgeText = when (destination) {
-                                DrawerDestination.LIBRARY -> "${allTracks.size}"
-                                DrawerDestination.PLAYLISTS -> "${playlists.size}"
-                                DrawerDestination.STATS -> if (totalPlayCount > 0) "$totalPlayCount" else null
-                                DrawerDestination.SMART_QUEUE -> if (smartQueueSuggestions.isNotEmpty()) "${smartQueueSuggestions.size}" else null
-                                DrawerDestination.METADATA_EDITOR -> "TAGS"
-                                DrawerDestination.EQUALIZER -> if (settings.eqEnabled) "ON" else "OFF"
-                                DrawerDestination.SETTINGS -> {
-                                    val totalExclusions = excludedFolders.size + settings.excludedFileTypes.size
-                                    if (totalExclusions > 0) "$totalExclusions" else null
-                                }
-                            }
-
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = if (selected) drawerSelectedBg else drawerItemBg,
-                                border = BorderStroke(
-                                    width = if (selected) 1.3.dp else 0.8.dp,
-                                    color = if (selected) photonColors.photonGlow else photonColors.cardBorder.copy(alpha = 0.65f)
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                            ) {
-                                NavigationDrawerItem(
-                                    label = {
-                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                            Text(
-                                                text = destination.label,
-                                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                                color = if (selected) drawerHighlightText else Color.White
-                                            )
-                                            Text(
-                                                text = destination.description,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = if (selected) Color.White.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.74f)
-                                            )
-                                        }
-                                    },
-                                    selected = selected,
-                                    onClick = { navigateTo(destination) },
-                                    icon = {
-                                        Icon(
-                                            imageVector = destination.icon,
-                                            contentDescription = destination.label,
-                                            tint = if (selected) drawerHighlightText else Color.White.copy(alpha = 0.9f)
-                                        )
-                                    },
-                                    badge = badgeText?.let { count ->
-                                        {
-                                            Surface(
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = if (selected) {
-                                                    photonColors.photonGlow.copy(alpha = 0.28f)
-                                                } else {
-                                                    photonColors.backdropMid.copy(alpha = 0.78f)
-                                                },
-                                                border = BorderStroke(
-                                                    0.9.dp,
-                                                    if (selected) drawerHighlightText else photonColors.cardBorder
-                                                )
-                                            ) {
-                                                Text(
-                                                    text = count,
-                                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                                    color = Color.White,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(16.dp),
-                                    modifier = Modifier.testTag("drawer_item_${destination.name.lowercase()}"),
-                                    colors = NavigationDrawerItemDefaults.colors(
-                                        selectedContainerColor = Color.Transparent,
-                                        unselectedContainerColor = Color.Transparent,
-                                        selectedIconColor = drawerHighlightText,
-                                        selectedTextColor = drawerHighlightText,
-                                        unselectedIconColor = Color.White.copy(alpha = 0.9f),
-                                        unselectedTextColor = Color.White
-                                    )
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 18.dp),
-                            color = photonColors.photonGlow.copy(alpha = 0.38f)
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = drawerItemBg,
-                            border = BorderStroke(0.8.dp, photonColors.losslessBadge.copy(alpha = 0.45f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 4.dp)
-                        ) {
-                            NavigationDrawerItem(
-                                label = {
-                                    Text(
-                                        text = "Auto-Scan Music Now",
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                                        color = Color.White
-                                    )
-                                },
-                                selected = false,
-                                onClick = {
-                                    scope.launch { drawerState.close() }
-                                    viewModel.scanWatchedFoldersNow()
-                                },
-                                icon = {
-                                    Icon(
-                                        Icons.Rounded.Radar,
-                                        contentDescription = "Scan music now",
-                                        tint = photonColors.losslessBadge
-                                    )
-                                },
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier.testTag("drawer_scan_now_item"),
-                                colors = NavigationDrawerItemDefaults.colors(
-                                    unselectedContainerColor = Color.Transparent,
-                                    unselectedTextColor = Color.White
-                                )
-                            )
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = drawerItemBg,
-                            border = BorderStroke(
-                                0.8.dp,
-                                if (playbackState.sleepTimer.isActive) {
-                                    photonColors.goldBadge.copy(alpha = 0.7f)
-                                } else {
-                                    photonColors.cardBorder.copy(alpha = 0.6f)
-                                }
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 4.dp)
-                        ) {
-                            NavigationDrawerItem(
-                                label = {
-                                    Text(
-                                        text = if (playbackState.sleepTimer.isActive) {
-                                            "Sleep Timer (${playbackState.sleepTimer.label})"
-                                        } else {
-                                            "Sleep Timer"
-                                        },
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                                        color = Color.White
-                                    )
-                                },
-                                selected = false,
-                                onClick = {
-                                    scope.launch { drawerState.close() }
-                                    showSleepTimerDialog = true
-                                },
-                                icon = {
-                                    Icon(
-                                        Icons.Rounded.Bedtime,
-                                        contentDescription = "Sleep timer",
-                                        tint = if (playbackState.sleepTimer.isActive) photonColors.goldBadge else Color.White.copy(alpha = 0.9f)
-                                    )
-                                },
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier.testTag("drawer_sleep_timer_item"),
-                                colors = NavigationDrawerItemDefaults.colors(
-                                    unselectedContainerColor = Color.Transparent,
-                                    unselectedTextColor = Color.White
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    ) {
-        GalaxyBackdrop(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Scaffold(
-                    containerColor = Color.Transparent,
-                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
-                    snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-                    topBar = {
-                        TopAppBar(
-                            navigationIcon = {
-                                if (activeCollectionDetail != null) {
-                                    IconButton(
-                                        onClick = popCollectionDetail,
-                                        modifier = Modifier.testTag("collection_detail_back_btn")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                                            contentDescription = "Navigate back",
-                                            tint = photonColors.photonGlow,
-                                            modifier = Modifier.size(26.dp)
-                                        )
-                                    }
-                                } else {
-                                    IconButton(
-                                        onClick = { scope.launch { drawerState.open() } },
-                                        modifier = Modifier.testTag("sidebar_menu_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Menu,
-                                            contentDescription = "Open navigation sidebar",
-                                            tint = photonColors.photonGlow,
-                                            modifier = Modifier.size(26.dp)
-                                        )
-                                    }
-                                }
-                            },
-                            title = {
-                                Text(
-                                    text = when (activeCollectionDetail) {
-                                        is CollectionDetailTarget.Artist -> "Artist"
-                                        is CollectionDetailTarget.Album -> "Album"
-                                        null -> currentDestination.label
-                                    },
-                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            },
-                            actions = {
+    GalaxyBackdrop(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Scaffold(
+                containerColor = Color.Transparent,
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+                topBar = {
+                    TopAppBar(
+                        navigationIcon = {
+                            if (!isTopLevel) {
                                 IconButton(
-                                    onClick = { showSleepTimerDialog = true },
-                                    modifier = Modifier.testTag("top_sleep_timer_button")
+                                    onClick = popBack,
+                                    modifier = Modifier.testTag("top_bar_back_btn")
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Rounded.Bedtime,
-                                        contentDescription = "Sleep Timer",
-                                        tint = if (playbackState.sleepTimer.isActive) {
-                                            photonColors.goldBadge
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        }
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { viewModel.setDarkMode(!settings.darkMode) },
-                                    modifier = Modifier.testTag("top_theme_toggle_button")
-                                ) {
-                                    Icon(
-                                        imageVector = if (settings.darkMode) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                        contentDescription = "Toggle Dark or Light Mode",
+                                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                        contentDescription = "Navigate back",
                                         tint = photonColors.photonGlow
                                     )
                                 }
-                            },
-                            colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = Color.Transparent
+                            }
+                        },
+                        title = {
+                            Text(
+                                text = topBarTitle,
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                        )
-                    },
-                    bottomBar = {
-                        if (playbackState.currentTrack != null) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .windowInsetsPadding(WindowInsets.navigationBars)
+                        },
+                        actions = {
+                            IconButton(
+                                onClick = { showAudioLabSheet = true },
+                                modifier = Modifier.testTag("top_audio_lab_btn")
                             ) {
-                                PhotonMiniPlayerBar(
-                                    playbackState = playbackState,
-                                    gestureControlsEnabled = settings.gestureControlsEnabled,
-                                    onExpandClick = { nowPlayingExpanded = true },
-                                    onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
-                                    onSkipNext = { viewModel.playerController.skipNext() },
-                                    onSkipPrevious = { viewModel.playerController.skipPrevious() },
-                                    onNavigateToArtist = openArtistDetail
+                                Icon(
+                                    imageVector = Icons.Rounded.Equalizer,
+                                    contentDescription = "Open Audio Lab",
+                                    tint = if (settings.eqEnabled) photonColors.photonGlow else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (playbackState.sleepTimer.isActive) {
+                                IconButton(
+                                    onClick = { showSleepTimerDialog = true },
+                                    modifier = Modifier.testTag("top_sleep_timer_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Bedtime,
+                                        contentDescription = "Sleep Timer Active",
+                                        tint = photonColors.goldBadge
+                                    )
+                                }
+                            }
+                            if (currentKey != PhotonNavKey.SettingsKey) {
+                                IconButton(
+                                    onClick = { pushRoute(PhotonNavKey.SettingsKey) },
+                                    modifier = Modifier.testTag("top_settings_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Settings,
+                                        contentDescription = "Open Settings",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = Color.Transparent
+                        )
+                    )
+                },
+                bottomBar = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // Persistent Docked Mini-Player directly above NavigationBar
+                        if (playbackState.currentTrack != null) {
+                            PhotonMiniPlayerBar(
+                                playbackState = playbackState,
+                                gestureControlsEnabled = settings.gestureControlsEnabled,
+                                onExpandClick = { nowPlayingExpanded = true },
+                                onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
+                                onSkipNext = { viewModel.playerController.skipNext() },
+                                onSkipPrevious = { viewModel.playerController.skipPrevious() },
+                                onNavigateToArtist = { artist ->
+                                    pushRoute(PhotonNavKey.ArtistDetailKey(artist))
+                                }
+                            )
+                        }
+
+                        // Persistent 4-Tab Material 3 NavigationBar
+                        NavigationBar(
+                            containerColor = photonColors.backdropTop.copy(alpha = 0.94f),
+                            tonalElevation = 0.dp,
+                            modifier = Modifier.testTag("photon_bottom_nav_bar")
+                        ) {
+                            TopLevelTab.entries.forEach { tab ->
+                                val selected = currentKey == tab.key ||
+                                    (tab == TopLevelTab.LIBRARY && (currentKey is PhotonNavKey.AlbumDetailKey || currentKey is PhotonNavKey.ArtistDetailKey))
+                                NavigationBarItem(
+                                    selected = selected,
+                                    onClick = { switchTopLevelTab(tab.key) },
+                                    icon = {
+                                        Icon(
+                                            imageVector = tab.icon,
+                                            contentDescription = tab.label
+                                        )
+                                    },
+                                    label = {
+                                        Text(
+                                            text = tab.label,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                            ),
+                                            maxLines = 1
+                                        )
+                                    },
+                                    modifier = Modifier.testTag(tab.tag),
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = photonColors.photonGlow,
+                                        selectedTextColor = photonColors.photonGlow,
+                                        indicatorColor = photonColors.photonGlow.copy(alpha = 0.16f),
+                                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 )
                             }
                         }
                     }
-                ) { innerPadding ->
-                    if (activeCollectionDetail != null) {
-                        ArtistAlbumDetailScreen(
-                            target = activeCollectionDetail,
-                            allTracks = allTracks,
-                            currentTrackId = playbackState.currentTrack?.id,
-                            isPlaying = playbackState.isPlaying,
-                            onBack = popCollectionDetail,
-                            onNavigateToArtist = openArtistDetail,
-                            onNavigateToAlbum = openAlbumDetail,
-                            onPlayTracks = viewModel::playTracks,
-                            onShuffleTracks = viewModel::playShuffled,
-                            onPlayNext = viewModel::playNextFromSmartQueue,
-                            onToggleFavorite = viewModel::toggleFavorite,
-                            onAddToPlaylist = { trackForPlaylistPicker = it },
-                            onEditTrackMetadata = openTrackInMetadataEditor,
-                            onEditAlbumMetadata = openAlbumInMetadataEditor,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(innerPadding)
-                        )
-                    } else Crossfade(
-                        targetState = currentDestination,
-                        animationSpec = tween(durationMillis = 220),
-                        label = "drawer_destination_crossfade",
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(innerPadding)
-                    ) { destination ->
-                        when (destination) {
-                            DrawerDestination.LIBRARY -> LibraryScreen(
+                }
+            ) { innerPadding ->
+                // Jetpack Navigation 3 NavDisplay with Predictive Back Support
+                NavDisplay(
+                    backStack = backStack,
+                    onBack = popBack,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    entryProvider = entryProvider {
+                        entry<PhotonNavKey.HomeKey> {
+                            HomeScreen(
+                                playbackState = playbackState,
+                                allTracks = allTracks,
+                                recentlyAddedTracks = recentlyAddedTracks,
+                                mostPlayedTracks = mostPlayedTracks,
+                                forgottenFavorites = forgottenFavorites,
+                                onResumeOrExpandDeck = {
+                                    if (playbackState.currentTrack != null) {
+                                        nowPlayingExpanded = true
+                                    } else if (recentlyAddedTracks.isNotEmpty()) {
+                                        viewModel.playTracks(recentlyAddedTracks, 0, "Recently Added")
+                                        nowPlayingExpanded = true
+                                    }
+                                },
+                                onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
+                                onPlayTracks = { list, index, label ->
+                                    viewModel.playTracks(list, index, label)
+                                },
+                                onSmartMix25Shuffle = viewModel::playSmartMix25Shuffle,
+                                onSmartMixLossless = viewModel::playSmartMixLosslessOnly,
+                                onSmartMixRecentlyImported = viewModel::playSmartMixRecentlyImported,
+                                onImportAudio = launchImportAudio,
+                                onGenerateStarterWavs = viewModel::generateStarterWavTracks,
+                                onNavigateToAlbum = { album, artist ->
+                                    pushRoute(PhotonNavKey.AlbumDetailKey(album, artist))
+                                },
+                                onNavigateToArtist = { artist ->
+                                    pushRoute(PhotonNavKey.ArtistDetailKey(artist))
+                                }
+                            )
+                        }
+
+                        entry<PhotonNavKey.LibraryKey> {
+                            LibraryBrowserScreen(
                                 tracks = tracks,
-                                allLibraryTracks = allTracks,
-                                favoriteTracks = favoriteTracks,
-                                recentlyPlayedTracks = recentlyPlayedTracks,
-                                playlists = playlists,
-                                selectedPlaylistId = selectedPlaylistId,
-                                selectedPlaylistTracks = selectedPlaylistTracks,
-                                totalLibraryCount = allTracks.size,
+                                allTracks = allTracks,
+                                watchedFolders = watchedFolders,
+                                playCountMap = trackPlayCountMap,
                                 currentTrackId = playbackState.currentTrack?.id,
-                                currentTrack = playbackState.currentTrack,
-                                signalInfo = playbackState.signalInfo,
                                 isPlaying = playbackState.isPlaying,
-                                searchQuery = searchQuery,
-                                searchHistory = settings.searchHistory,
                                 sortOption = settings.sortOption,
                                 sortDirection = settings.sortDirection,
-                                monitorStatus = monitorStatus,
-                                onSearchQueryChange = viewModel::updateSearchQuery,
-                                onCommitSearchQuery = viewModel::commitSearchQuery,
-                                onRemoveSearchHistoryItem = viewModel::removeSearchHistoryItem,
-                                onClearSearchHistory = viewModel::clearSearchHistory,
-                                onSortOptionSelect = viewModel::selectSortOption,
+                                onSelectSortOption = viewModel::selectSortOption,
                                 onToggleSortDirection = viewModel::toggleSortDirection,
-                                onImportFilesClick = launchImportAudio,
-                                onWatchFolderClick = launchWatchFolder,
-                                onScanFoldersNow = viewModel::scanWatchedFoldersNow,
-                                onGenerateStudioWav = viewModel::generateStarterWavTracks,
-                                onPlayTrack = { list, idx -> viewModel.playTracks(list, idx) },
-                                onShuffleAll = viewModel::playShuffled,
+                                onPlayTracks = { list, idx, src -> viewModel.playTracks(list, idx, src) },
+                                onShuffleTracks = { list, src -> viewModel.playShuffled(list, src) },
+                                onPlayNext = viewModel::playNextFromSmartQueue,
                                 onToggleFavorite = viewModel::toggleFavorite,
-                                onAutoCompleteMetadata = openTrackInMetadataEditor,
                                 onAddToPlaylist = { trackForPlaylistPicker = it },
-                                onDeleteTrack = viewModel::deleteTrack,
-                                onSelectPlaylist = viewModel::selectPlaylist,
-                                onCreatePlaylist = viewModel::createPlaylist,
-                                onRenamePlaylist = viewModel::renamePlaylist,
-                                onDeletePlaylist = viewModel::deletePlaylist,
-                                onAddTrackToPlaylist = viewModel::addTrackToPlaylist,
-                                onRemoveTrackFromPlaylist = viewModel::removeTrackFromPlaylist,
-                                onReorderPlaylistTracks = viewModel::persistPlaylistOrder,
-                                onOpenStats = { currentDestination = DrawerDestination.STATS },
-                                onOpenNowPlaying = { nowPlayingExpanded = true },
-                                onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
-                                onActivePageChanged = { libraryActivePage = it }
+                                onInspectTrack = { track ->
+                                    viewModel.selectTrackForEditor(track)
+                                    pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
+                                },
+                                onNavigateToAlbum = { album, artist ->
+                                    pushRoute(PhotonNavKey.AlbumDetailKey(album, artist))
+                                },
+                                onNavigateToArtist = { artist ->
+                                    pushRoute(PhotonNavKey.ArtistDetailKey(artist))
+                                },
+                                onImportAudio = launchImportAudio,
+                                onWatchFolder = launchWatchFolder
                             )
+                        }
 
-                            DrawerDestination.PLAYLISTS -> PlaylistsScreen(
+                        entry<PhotonNavKey.PlaylistsKey> {
+                            PlaylistsHubScreen(
                                 playlists = playlists,
-                                allLibraryTracks = allTracks,
+                                playlistCollages = playlistCollages,
+                                allTracks = allTracks,
                                 selectedPlaylistId = selectedPlaylistId,
                                 selectedPlaylistTracks = selectedPlaylistTracks,
-                                currentTrackId = playbackState.currentTrack?.id,
-                                isPlaying = playbackState.isPlaying,
                                 onSelectPlaylist = viewModel::selectPlaylist,
                                 onCreatePlaylist = viewModel::createPlaylist,
-                                onRenamePlaylist = viewModel::renamePlaylist,
                                 onDeletePlaylist = viewModel::deletePlaylist,
-                                onAddTrackToPlaylist = viewModel::addTrackToPlaylist,
-                                onRemoveTrackFromPlaylist = viewModel::removeTrackFromPlaylist,
                                 onReorderPlaylistTracks = viewModel::persistPlaylistOrder,
-                                onPlayTracks = viewModel::playTracks,
-                                onShuffleTracks = viewModel::playShuffled,
-                                onAutoCompleteMetadata = openTrackInMetadataEditor
+                                onRemoveTrackFromPlaylist = viewModel::removeTrackFromPlaylist,
+                                onPlayTracks = { list, idx, src -> viewModel.playTracks(list, idx, src) },
+                                onShuffleTracks = { list, src -> viewModel.playShuffled(list, src) },
+                                onRequestExportM3u8 = { name, list ->
+                                    pendingM3u8Export = name to list
+                                    val safeFile = name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                                    exportM3u8Launcher.launch("${safeFile.ifBlank { "photon_playlist" }}.m3u8")
+                                },
+                                onRequestImportM3u8 = {
+                                    importM3u8Launcher.launch(
+                                        arrayOf("audio/x-mpegurl", "application/vnd.apple.mpegurl", "audio/mpegurl", "text/plain", "*/*")
+                                    )
+                                }
                             )
+                        }
 
-                            DrawerDestination.STATS -> ListeningStatsScreen(
-                                totalPlayCount = totalPlayCount,
-                                totalLibraryTracks = allTracks.size,
-                                favoriteTracks = favoriteTracks,
-                                mostPlayedTracks = mostPlayedTracks,
-                                genreStats = genrePlayStats,
-                                artistStats = artistPlayStats,
-                                currentTrackId = playbackState.currentTrack?.id,
-                                isPlaying = playbackState.isPlaying,
-                                onPlayTracks = viewModel::playTracks,
-                                onToggleFavorite = viewModel::toggleFavorite
-                            )
-
-                            DrawerDestination.SMART_QUEUE -> SmartQueueScreen(
-                                playbackState = playbackState,
-                                suggestions = smartQueueSuggestions,
-                                totalPlayCount = totalPlayCount,
-                                autoPlayEnabled = settings.smartQueueAutoPlay,
-                                onToggleAutoPlay = viewModel::setSmartQueueAutoPlay,
+                        entry<PhotonNavKey.SearchKey> {
+                            SearchScreen(
+                                query = searchQuery,
+                                searchHistory = settings.searchHistory,
+                                allTracks = allTracks,
+                                recentlyPlayedTracks = recentlyPlayedTracks,
+                                playlists = playlists,
+                                onQueryChange = viewModel::updateSearchQuery,
+                                onCommitQuery = viewModel::commitSearchQuery,
+                                onRemoveHistoryItem = viewModel::removeSearchHistoryItem,
+                                onClearHistory = viewModel::clearSearchHistory,
+                                onPlayTracks = { list, idx, src -> viewModel.playTracks(list, idx, src) },
                                 onPlayNext = viewModel::playNextFromSmartQueue,
                                 onAddToQueue = viewModel::addSuggestionToQueue,
-                                onQueueAllSuggestions = viewModel::queueAllSmartSuggestions,
-                                onJumpToQueueIndex = viewModel::jumpToQueueIndex,
-                                onClearHistory = viewModel::clearListeningHistory
+                                onInspectTrack = { track ->
+                                    viewModel.selectTrackForEditor(track)
+                                    pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
+                                },
+                                onNavigateToAlbum = { album, artist ->
+                                    pushRoute(PhotonNavKey.AlbumDetailKey(album, artist))
+                                },
+                                onNavigateToArtist = { artist ->
+                                    pushRoute(PhotonNavKey.ArtistDetailKey(artist))
+                                },
+                                onOpenPlaylist = { playlistId ->
+                                    viewModel.selectPlaylist(playlistId)
+                                    switchTopLevelTab(PhotonNavKey.PlaylistsKey)
+                                }
                             )
+                        }
 
-                            DrawerDestination.METADATA_EDITOR -> MetadataEditorScreen(
+                        entry<PhotonNavKey.AlbumDetailKey> { key ->
+                            ArtistAlbumDetailScreen(
+                                target = CollectionDetailTarget.Album(key.albumId, key.preferredArtist),
                                 allTracks = allTracks,
-                                selectedTrackId = editorSelectedTrackId,
-                                currentlyPlayingTrackId = playbackState.currentTrack?.id,
-                                searchState = editorSearchState,
+                                currentTrackId = playbackState.currentTrack?.id,
+                                isPlaying = playbackState.isPlaying,
+                                onBack = popBack,
+                                onNavigateToArtist = { artist -> pushRoute(PhotonNavKey.ArtistDetailKey(artist)) },
+                                onNavigateToAlbum = { album, artist -> pushRoute(PhotonNavKey.AlbumDetailKey(album, artist)) },
+                                onPlayTracks = { list, idx -> viewModel.playTracks(list, idx, key.albumId) },
+                                onShuffleTracks = { list -> viewModel.playShuffled(list, "${key.albumId} (Shuffled)") },
+                                onPlayNext = viewModel::playNextFromSmartQueue,
+                                onToggleFavorite = viewModel::toggleFavorite,
+                                onAddToPlaylist = { trackForPlaylistPicker = it },
+                                onEditTrackMetadata = { track ->
+                                    viewModel.selectTrackForEditor(track)
+                                    pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
+                                },
+                                onEditAlbumMetadata = { _, anchorTrack ->
+                                    viewModel.selectTrackForEditor(anchorTrack)
+                                    pushRoute(PhotonNavKey.LyricsInspectorKey(anchorTrack.id))
+                                }
+                            )
+                        }
+
+                        entry<PhotonNavKey.ArtistDetailKey> { key ->
+                            ArtistAlbumDetailScreen(
+                                target = CollectionDetailTarget.Artist(key.artistId),
+                                allTracks = allTracks,
+                                currentTrackId = playbackState.currentTrack?.id,
+                                isPlaying = playbackState.isPlaying,
+                                onBack = popBack,
+                                onNavigateToArtist = { artist -> pushRoute(PhotonNavKey.ArtistDetailKey(artist)) },
+                                onNavigateToAlbum = { album, artist -> pushRoute(PhotonNavKey.AlbumDetailKey(album, artist)) },
+                                onPlayTracks = { list, idx -> viewModel.playTracks(list, idx, key.artistId) },
+                                onShuffleTracks = { list -> viewModel.playShuffled(list, "${key.artistId} (Shuffled)") },
+                                onPlayNext = viewModel::playNextFromSmartQueue,
+                                onToggleFavorite = viewModel::toggleFavorite,
+                                onAddToPlaylist = { trackForPlaylistPicker = it },
+                                onEditTrackMetadata = { track ->
+                                    viewModel.selectTrackForEditor(track)
+                                    pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
+                                },
+                                onEditAlbumMetadata = { _, anchorTrack ->
+                                    viewModel.selectTrackForEditor(anchorTrack)
+                                    pushRoute(PhotonNavKey.LyricsInspectorKey(anchorTrack.id))
+                                }
+                            )
+                        }
+
+                        entry<PhotonNavKey.QueueKey> {
+                            QueueScreen(
+                                playbackState = playbackState,
+                                onJumpToIndex = viewModel::jumpToQueueIndex,
+                                onReorderQueue = viewModel::reorderActiveQueue,
+                                onRemoveFromQueue = viewModel::removeTrackFromActiveQueue,
+                                onClearUpcoming = viewModel::clearUpcomingQueue,
+                                onSaveQueueAsPlaylist = viewModel::saveActiveQueueAsPlaylist
+                            )
+                        }
+
+                        entry<PhotonNavKey.LyricsInspectorKey> { key ->
+                            val inspectedTrack = remember(key.trackId, allTracks, playbackState.currentTrack) {
+                                allTracks.firstOrNull { it.id == key.trackId } ?: playbackState.currentTrack
+                            }
+                            LyricsInspectorScreen(
+                                track = inspectedTrack,
+                                playbackState = playbackState,
+                                editorSearchState = editorSearchState,
                                 pickedCoverOverrideUri = pickedCoverOverrideUri,
                                 onClearPickedCoverOverride = { pickedCoverOverrideUri = null },
-                                onSelectTrack = viewModel::selectTrackForEditor,
-                                onSearchQueryChange = viewModel::updateEditorSearchQuery,
-                                onSearchWeb = { query, track ->
-                                    viewModel.searchMetadataForEditor(query = query, targetTrack = track)
+                                onLoadLyrics = viewModel::loadTrackLyrics,
+                                onFetchWebLyrics = viewModel::fetchTrackLyricsOnline,
+                                onSaveCustomLyrics = viewModel::saveCustomLyrics,
+                                onSeekTo = { pos -> viewModel.playerController.seekTo(pos) },
+                                onUpdateWebSearchQuery = viewModel::updateEditorSearchQuery,
+                                onSearchWebMetadata = { query, target ->
+                                    viewModel.searchMetadataForEditor(query = query, targetTrack = target)
                                 },
-                                onLaunchPhotoPickerForCover = launchPickCoverPhoto,
-                                onSaveMetadata = viewModel::saveFullTrackMetadata,
-                                onSaveBatchMetadata = viewModel::saveBatchTrackMetadata,
-                                initialEditorMode = editorInitialMode
+                                onPickCoverPhoto = launchPickCoverPhoto,
+                                onSaveMetadata = { trackId, title, artist, album, trackNum, genre, publisher, releaseDate, composer, notes, artwork ->
+                                    viewModel.saveFullTrackMetadata(
+                                        trackId = trackId,
+                                        title = title,
+                                        artist = artist,
+                                        album = album,
+                                        trackNumber = trackNum,
+                                        genre = genre,
+                                        publisher = publisher,
+                                        releaseDate = releaseDate,
+                                        composer = composer,
+                                        notes = notes,
+                                        artworkUri = artwork
+                                    )
+                                }
                             )
+                        }
 
-                            DrawerDestination.EQUALIZER -> EqualizerScreen(
-                                settings = settings,
-                                telemetry = playbackState.eqTelemetry,
-                                signalInfo = playbackState.signalInfo,
-                                currentTrack = playbackState.currentTrack,
-                                allTracks = allTracks,
-                                replayGainScanProgress = replayGainScanProgress,
-                                spectrumFlow = viewModel.spectrumState,
-                                onToggleEq = viewModel::setEqEnabled,
-                                onSelectPreset = viewModel::applyEqPreset,
-                                onBandChange = viewModel::updateEqBand,
-                                onSaveCustomPreset = viewModel::saveCustomEqPreset,
-                                onDeleteCustomPreset = viewModel::deleteCustomEqPreset,
-                                onSpatialChange = viewModel::updateSpatialEffects,
-                                onSetPreAmpDb = viewModel::setPreAmpDb,
-                                onSetSoftLimiterEnabled = viewModel::setSoftLimiterEnabled,
-                                onSetLoudnessNormalizerEnabled = viewModel::setLoudnessNormalizerEnabled,
-                                onSetStereoBalance = viewModel::setStereoBalance,
-                                onSetMonoAudioEnabled = viewModel::setMonoAudioEnabled,
-                                onSetCrossfeedStrength = viewModel::setCrossfeedStrength,
-                                onSetReverbPreset = viewModel::setReverbPreset,
-                                onSetAutoEqByOutputEnabled = viewModel::setAutoEqByOutputEnabled,
-                                onSetOutputRouteEqPreset = viewModel::setOutputRouteEqPreset,
-                                onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile,
-                                onSetReplayGainMode = viewModel::setReplayGainMode,
-                                onSetReplayGainTargetLufs = viewModel::setReplayGainTargetLufs,
-                                onSetReplayGainPreAmpDb = viewModel::setReplayGainPreAmpDb,
-                                onSetPreventClipping = viewModel::setPreventClipping,
-                                onScanLibraryLoudness = viewModel::scanLibraryLoudness,
-                                onScanCurrentTrackLoudness = viewModel::scanCurrentTrackLoudness
-                            )
-
-                            DrawerDestination.SETTINGS -> SettingsAndFoldersScreen(
+                        entry<PhotonNavKey.SettingsKey> {
+                            SettingsAndFoldersScreen(
                                 settings = settings,
                                 sleepTimer = playbackState.sleepTimer,
                                 currentTrack = playbackState.currentTrack,
@@ -1036,65 +834,96 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                                 onSetCheckUpdatesOnLaunch = viewModel::setCheckUpdatesOnLaunch,
                                 onCheckUpdatesNow = { viewModel.checkForGitHubUpdates(manual = true) },
                                 onClearListeningHistory = viewModel::clearListeningHistory,
-                                onResetSettingsToDefaults = viewModel::resetSettingsToDefaults
+                                onResetSettingsToDefaults = viewModel::resetSettingsToDefaults,
+                                onApplyDeckStylePreset = viewModel::applyDeckStylePreset,
+                                onImportAudio = launchImportAudio,
+                                onSetMinTrackDurationSec = viewModel::setMinTrackDurationSec
                             )
                         }
                     }
-                }
+                )
+            }
 
-                // Full-Screen Immersive Now Playing Overlay
-                AnimatedVisibility(
-                    visible = nowPlayingExpanded,
-                    enter = slideInVertically(initialOffsetY = { it }),
-                    exit = slideOutVertically(targetOffsetY = { it }),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
-                    NowPlayingScreen(
-                        playbackState = playbackState,
-                        spectrumFlow = viewModel.spectrumState,
-                        settings = settings,
-                        onCollapse = { nowPlayingExpanded = false },
-                        onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
-                        onSeekTo = { viewModel.playerController.seekTo(it) },
-                        onSkipNext = { viewModel.playerController.skipNext() },
-                        onSkipPrevious = { viewModel.playerController.skipPrevious() },
-                        onToggleShuffle = { viewModel.playerController.toggleShuffle() },
-                        onCycleRepeat = { viewModel.playerController.cycleRepeatMode() },
-                        onGetVolumeFraction = { viewModel.playerController.getVolumeFraction() },
-                        onSetVolumeFraction = { viewModel.playerController.setVolumeFraction(it) },
-                        onOpenSleepTimer = { showSleepTimerDialog = true },
-                        onOpenEqualizer = {
-                            nowPlayingExpanded = false
-                            currentDestination = DrawerDestination.EQUALIZER
-                        },
-                        onOpenSmartQueue = {
-                            nowPlayingExpanded = false
-                            currentDestination = DrawerDestination.SMART_QUEUE
-                        },
-                        onOpenMetadataAutoComplete = openTrackInMetadataEditor,
-                        onAddToPlaylist = { trackForPlaylistPicker = it },
-                        onToggleFavorite = viewModel::toggleFavorite,
-                        onJumpToQueueIndex = viewModel::jumpToQueueIndex,
-                        onReorderQueue = viewModel::reorderActiveQueue,
-                        onRemoveQueueIndex = viewModel::removeTrackFromActiveQueue,
-                        onClearUpcomingQueue = viewModel::clearUpcomingQueue,
-                        onSaveQueueAsPlaylist = viewModel::saveActiveQueueAsPlaylist,
-                        onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
-                        onSetPlaybackPitch = viewModel::setPlaybackPitch,
-                        onResetTempoAndPitch = viewModel::resetTempoAndPitch,
-                        onSetAbLoopStart = viewModel::setAbLoopStart,
-                        onSetAbLoopEnd = viewModel::setAbLoopEnd,
-                        onClearAbLoop = viewModel::clearAbLoop,
-                        onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile,
-                        onNavigateToArtist = openArtistDetail,
-                        onNavigateToAlbum = openAlbumDetail
-                    )
-                }
+            // Full-Screen Immersive Now Playing Deck Overlay
+            AnimatedVisibility(
+                visible = nowPlayingExpanded,
+                enter = slideInVertically(initialOffsetY = { it }),
+                exit = slideOutVertically(targetOffsetY = { it }),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                NowPlayingScreen(
+                    playbackState = playbackState,
+                    spectrumFlow = viewModel.spectrumState,
+                    settings = settings,
+                    onCollapse = { nowPlayingExpanded = false },
+                    onTogglePlayPause = { viewModel.playerController.togglePlayPause() },
+                    onSeekTo = { viewModel.playerController.seekTo(it) },
+                    onSkipNext = { viewModel.playerController.skipNext() },
+                    onSkipPrevious = { viewModel.playerController.skipPrevious() },
+                    onToggleShuffle = { viewModel.playerController.toggleShuffle() },
+                    onCycleRepeat = { viewModel.playerController.cycleRepeatMode() },
+                    onGetVolumeFraction = { viewModel.playerController.getVolumeFraction() },
+                    onSetVolumeFraction = { viewModel.playerController.setVolumeFraction(it) },
+                    onOpenSleepTimer = { showSleepTimerDialog = true },
+                    onOpenEqualizer = { showAudioLabSheet = true },
+                    onOpenSmartQueue = { pushRoute(PhotonNavKey.QueueKey) },
+                    onOpenMetadataAutoComplete = { track ->
+                        viewModel.selectTrackForEditor(track)
+                        pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
+                    },
+                    onAddToPlaylist = { trackForPlaylistPicker = it },
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    onJumpToQueueIndex = viewModel::jumpToQueueIndex,
+                    onReorderQueue = viewModel::reorderActiveQueue,
+                    onRemoveQueueIndex = viewModel::removeTrackFromActiveQueue,
+                    onClearUpcomingQueue = viewModel::clearUpcomingQueue,
+                    onSaveQueueAsPlaylist = viewModel::saveActiveQueueAsPlaylist,
+                    onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
+                    onSetPlaybackPitch = viewModel::setPlaybackPitch,
+                    onResetTempoAndPitch = viewModel::resetTempoAndPitch,
+                    onSetAbLoopStart = viewModel::setAbLoopStart,
+                    onSetAbLoopEnd = viewModel::setAbLoopEnd,
+                    onClearAbLoop = viewModel::clearAbLoop,
+                    onUpdateTrackSoundProfile = viewModel::updateTrackSoundProfile,
+                    onNavigateToArtist = { artist -> pushRoute(PhotonNavKey.ArtistDetailKey(artist)) },
+                    onNavigateToAlbum = { album, artist -> pushRoute(PhotonNavKey.AlbumDetailKey(album, artist)) },
+                    onOpenQueueScreen = { pushRoute(PhotonNavKey.QueueKey) },
+                    onOpenLyricsInspector = { trackId ->
+                        viewModel.selectTrackForEditorById(trackId)
+                        pushRoute(PhotonNavKey.LyricsInspectorKey(trackId))
+                    },
+                    onOpenAudioLab = { showAudioLabSheet = true }
+                )
             }
         }
     }
 
-    // GitHub New Version Available Alert Dialog (opens GitHub download page in browser)
+    // Audio Lab Modal Sheet (10-Band EQ, Crossfade & Gapless Engine, ReplayGain, Studio WAV Generator)
+    if (showAudioLabSheet) {
+        AudioLabModalSheet(
+            settings = settings,
+            eqTelemetry = playbackState.eqTelemetry,
+            replayGainScanProgress = replayGainScanProgress,
+            onDismiss = { showAudioLabSheet = false },
+            onSetEqEnabled = viewModel::setEqEnabled,
+            onApplyPreset = viewModel::applyEqPreset,
+            onUpdateBand = viewModel::updateEqBand,
+            onSaveCustomPreset = { name -> viewModel.saveCustomEqPreset(name) },
+            onDeleteCustomPreset = viewModel::deleteCustomEqPreset,
+            onSetPreAmpDb = viewModel::setPreAmpDb,
+            onUpdateSpatial = viewModel::updateSpatialEffects,
+            onSetCrossfadeSeconds = viewModel::setCrossfadeSeconds,
+            onSetCrossfadeCurve = viewModel::setCrossfadeCurve,
+            onSetGaplessEnabled = viewModel::setGaplessPlaybackEnabled,
+            onSetReplayGainMode = viewModel::setReplayGainMode,
+            onSetReplayGainTargetLufs = viewModel::setReplayGainTargetLufs,
+            onSetPreventClipping = viewModel::setPreventClipping,
+            onScanLibraryLoudness = { viewModel.scanLibraryLoudness(forceRescan = false) },
+            onGenerateStudioWavSample = viewModel::generateStudioWavSample
+        )
+    }
+
+    // GitHub New Version Available Alert Dialog
     availableUpdate?.let { update ->
         AlertDialog(
             onDismissRequest = { viewModel.dismissUpdateAlert(skipThisVersion = false) },
@@ -1149,8 +978,7 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                     onClick = {
                         viewModel.dismissUpdateAlert(skipThisVersion = false)
                         runCatching {
-                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
-                            context.startActivity(browserIntent)
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)))
                         }
                     },
                     modifier = Modifier.testTag("github_update_open_download_btn")
@@ -1165,15 +993,11 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                     TextButton(
                         onClick = { viewModel.dismissUpdateAlert(skipThisVersion = false) },
                         modifier = Modifier.testTag("github_update_later_btn")
-                    ) {
-                        Text("Later")
-                    }
+                    ) { Text("Later") }
                     TextButton(
                         onClick = { viewModel.dismissUpdateAlert(skipThisVersion = true) },
                         modifier = Modifier.testTag("github_update_skip_btn")
-                    ) {
-                        Text("Skip Version")
-                    }
+                    ) { Text("Skip Version") }
                 }
             }
         )
@@ -1201,7 +1025,7 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
         )
     }
 
-    // Password-Protected API Access Dialog (Create / Unlock / Change Password)
+    // Password-Protected API Access Dialog
     apiPasswordDialogMode?.let { mode ->
         ApiPasswordDialog(
             mode = mode,

@@ -80,13 +80,16 @@ data class AudioSignalInfo(
 
 enum class SortOption(val label: String) {
     CUSTOM_ORDER("Custom"),
+    TITLE("Title"),
+    DATE_ADDED("Date Added"),
+    DURATION("Duration"),
+    BITRATE_CODEC("Bitrate / Codec"),
+    PLAY_COUNT("Play Count"),
     ARTIST("Artist"),
     GENRE("Genre"),
     ALBUM("Album"),
     PUBLISHER("Publisher"),
-    RELEASE_YEAR("Year"),
-    TITLE("Title"),
-    DATE_ADDED("Added")
+    RELEASE_YEAR("Year")
 }
 
 enum class SortDirection {

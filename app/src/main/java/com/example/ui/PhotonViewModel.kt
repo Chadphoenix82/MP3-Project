@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -12,8 +13,11 @@ import com.example.data.db.TrackEntity
 import com.example.data.db.WatchedFolderEntity
 import com.example.data.library.FolderMonitorStatus
 import com.example.data.library.LibraryRepository
+import com.example.data.library.M3u8PlaylistCodec
+import com.example.data.library.ParsedLyrics
 import com.example.data.library.SmartQueueEngine
 import com.example.data.library.SmartQueueSuggestion
+import com.example.data.library.StudioWavSampleType
 import com.example.data.model.BatchMetadataPatch
 import com.example.data.model.CrossfadeCurveShape
 import com.example.data.model.EqualizerPreset
@@ -37,6 +41,7 @@ import com.example.player.PlaybackUiState
 import com.example.ui.theme.AppFontChoice
 import com.example.ui.theme.AppWallpaperPreset
 import com.example.ui.theme.CosmicThemeSkin
+import com.example.ui.theme.DeckStylePreset
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -98,6 +103,17 @@ class PhotonViewModel(
         initialValue = emptyList()
     )
 
+    val playlistCollageArtworks: StateFlow<Map<Long, List<String>>> = libraryRepository.playlistArtworks
+        .map { rows ->
+            rows.groupBy { it.playlistId }
+                .mapValues { (_, items) -> items.map { it.artworkUri }.distinct().take(4) }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
+
     val totalPlayCount: StateFlow<Int> = libraryRepository.totalPlayCount.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -115,6 +131,14 @@ class PhotonViewModel(
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    val recentlyAddedTracks: StateFlow<List<TrackEntity>> = allTracks
+        .map { tracks -> tracks.sortedByDescending { it.dateAdded }.take(20) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     val favoriteTracks: StateFlow<List<TrackEntity>> = allTracks
         .map { list -> list.filter { it.isFavorite } }
@@ -144,6 +168,14 @@ class PhotonViewModel(
         initialValue = emptyList()
     )
 
+    val trackPlayCountMap: StateFlow<Map<Long, Int>> = libraryRepository.trackPlayStats
+        .map { stats -> stats.associate { it.trackId to it.playCount } }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
+
     val mostPlayedTracks: StateFlow<List<Pair<TrackEntity, Int>>> = combine(
         allTracks,
         libraryRepository.trackPlayStats
@@ -152,6 +184,39 @@ class PhotonViewModel(
         stats.sortedByDescending { it.playCount }
             .mapNotNull { stat -> byId[stat.trackId]?.let { it to stat.playCount } }
             .take(20)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    /** High play count tracks not played in 30+ days (with graceful deep-cut fallback). */
+    val forgottenFavorites: StateFlow<List<TrackEntity>> = combine(
+        allTracks,
+        libraryRepository.trackPlayStats
+    ) { tracks, stats ->
+        val byId = tracks.associateBy { it.id }
+        val thirtyDaysAgoMs = System.currentTimeMillis() - 30L * 24L * 60L * 60L * 1000L
+        val strictForgotten = stats
+            .filter { it.playCount >= 2 && it.lastPlayedAt < thirtyDaysAgoMs }
+            .sortedByDescending { it.playCount }
+            .mapNotNull { byId[it.trackId] }
+        if (strictForgotten.isNotEmpty()) {
+            strictForgotten.take(16)
+        } else {
+            val statsById = stats.associateBy { it.trackId }
+            val candidates = tracks.filter { t ->
+                val st = statsById[t.id]
+                (st != null && st.lastPlayedAt < thirtyDaysAgoMs) ||
+                    (t.isFavorite && (st == null || st.lastPlayedAt < System.currentTimeMillis() - 7L * 86_400_000L))
+            }
+            if (candidates.isNotEmpty()) {
+                candidates.sortedBy { statsById[it.id]?.lastPlayedAt ?: 0L }.take(16)
+            } else {
+                // Surface unplayed gems from library so carousel always gives meaningful rediscovery
+                tracks.filter { it.id !in statsById }.sortedBy { it.dateAdded }.take(12)
+            }
+        }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -174,21 +239,25 @@ class PhotonViewModel(
         allTracks,
         settings,
         _searchQuery,
-        _formatFilter
-    ) { tracks, appSettings, query, format ->
+        _formatFilter,
+        trackPlayCountMap
+    ) { tracks, appSettings, query, format, playCounts ->
         val trimmed = query.trim().lowercase()
+        val minDurationMs = appSettings.minTrackDurationSec * 1000L
         val filtered = tracks.filter { track ->
+            val meetsMinDuration = minDurationMs <= 0L || track.durationMs <= 0L || track.durationMs >= minDurationMs
             val matchesFormat = format == null || track.format.equals(format, ignoreCase = true)
             val matchesQuery = trimmed.isEmpty() ||
                 track.title.lowercase().contains(trimmed) ||
                 track.artist.lowercase().contains(trimmed) ||
                 track.album.lowercase().contains(trimmed) ||
                 track.genre.lowercase().contains(trimmed) ||
+                track.composer.lowercase().contains(trimmed) ||
                 track.publisher.lowercase().contains(trimmed) ||
                 (track.releaseYear?.toString()?.contains(trimmed) == true)
-            matchesFormat && matchesQuery
+            meetsMinDuration && matchesFormat && matchesQuery
         }
-        sortTracks(filtered, appSettings.sortOption, appSettings.sortDirection)
+        sortTracks(filtered, appSettings.sortOption, appSettings.sortDirection, playCounts)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -274,6 +343,7 @@ class PhotonViewModel(
             settings.collect { appSettings ->
                 playerController.setCrossfadeSeconds(appSettings.crossfadeSeconds)
                 playerController.setCrossfadeCurve(appSettings.crossfadeCurve)
+                playerController.setGaplessPlaybackEnabled(appSettings.gaplessPlaybackEnabled)
                 playerController.updatePlaybackOptions(
                     speed = appSettings.playbackSpeed,
                     pitch = appSettings.playbackPitch,
@@ -681,17 +751,136 @@ class PhotonViewModel(
 
     // ---- Playback Controls ----
 
-    fun playTracks(tracks: List<TrackEntity>, startIndex: Int) {
+    fun playTracks(tracks: List<TrackEntity>, startIndex: Int, sourceLabel: String = "Library") {
         if (tracks.isEmpty()) return
         lastAutoAppendedForTrackId = null
-        playerController.playQueue(tracks, startIndex)
+        playerController.playQueue(tracks, startIndex, sourceLabel)
     }
 
-    fun playShuffled(tracks: List<TrackEntity>) {
+    fun playShuffled(tracks: List<TrackEntity>, sourceLabel: String = "Shuffled") {
         if (tracks.isEmpty()) return
         lastAutoAppendedForTrackId = null
         val shuffled = tracks.shuffled()
-        playerController.playQueue(shuffled, 0)
+        playerController.playQueue(shuffled, 0, sourceLabel)
+    }
+
+    // ---- Smart Auto-Mixes (Home Dashboard) ----
+
+    fun playSmartMix25Shuffle() {
+        val pool = allTracks.value
+        if (pool.isEmpty()) {
+            _snackbarMessages.tryEmit("Import or generate tracks first to launch 25-Track Shuffle")
+            return
+        }
+        val mix = pool.shuffled().take(25)
+        playTracks(mix, 0, sourceLabel = "25-Track Shuffle")
+        _snackbarMessages.tryEmit("Queued 25-Track Shuffle (${mix.size} tracks)")
+    }
+
+    fun playSmartMixLosslessOnly() {
+        val pool = allTracks.value.filter {
+            it.format.equals("FLAC", ignoreCase = true) ||
+                it.format.equals("WAV", ignoreCase = true) ||
+                it.bitrateKbps >= 256
+        }
+        if (pool.isEmpty()) {
+            _snackbarMessages.tryEmit("No FLAC, WAV, or high-bitrate (256+ kbps) tracks found yet")
+            return
+        }
+        playTracks(pool.shuffled(), 0, sourceLabel = "Lossless / Hi-Res Mix")
+        _snackbarMessages.tryEmit("Playing Lossless / Hi-Bitrate Auto-Mix (${pool.size} tracks)")
+    }
+
+    fun playSmartMixRecentlyImported() {
+        val pool = allTracks.value.sortedByDescending { it.dateAdded }.take(25)
+        if (pool.isEmpty()) {
+            _snackbarMessages.tryEmit("Library is empty — import audio to start")
+            return
+        }
+        playTracks(pool, 0, sourceLabel = "Recently Imported")
+        _snackbarMessages.tryEmit("Queued ${pool.size} recently imported tracks")
+    }
+
+    // ---- Audio Lab Studio WAV Samples ----
+
+    fun generateStudioWavSample(type: StudioWavSampleType) {
+        viewModelScope.launch {
+            _snackbarMessages.tryEmit("Synthesizing ${type.displayName}...")
+            val created = libraryRepository.generateStudioWavSample(type)
+            _snackbarMessages.tryEmit("Imported \"$created\" into library")
+        }
+    }
+
+    // ---- Synchronized Lyrics Engine ----
+
+    suspend fun loadTrackLyrics(track: TrackEntity): ParsedLyrics =
+        libraryRepository.loadTrackLyrics(track)
+
+    suspend fun fetchTrackLyricsOnline(track: TrackEntity): Result<ParsedLyrics> {
+        val result = libraryRepository.fetchTrackLyricsOnline(track)
+        result.onSuccess {
+            _snackbarMessages.tryEmit("Lyrics cached locally for \"${track.title}\"")
+        }.onFailure { err ->
+            _snackbarMessages.tryEmit(err.message ?: "Unable to fetch lyrics online")
+        }
+        return result
+    }
+
+    suspend fun saveCustomLyrics(trackId: Long, rawLyrics: String): ParsedLyrics {
+        val parsed = libraryRepository.saveCustomLyrics(trackId, rawLyrics)
+        _snackbarMessages.tryEmit("Saved lyrics locally to Room")
+        return parsed
+    }
+
+    // ---- M3U8 Playlist Export & Import ----
+
+    fun exportPlaylistToM3u8(context: Context, targetUri: Uri, playlistName: String, tracks: List<TrackEntity>) {
+        viewModelScope.launch {
+            val res = M3u8PlaylistCodec.exportToUri(context, targetUri, playlistName, tracks)
+            res.onSuccess { count ->
+                _snackbarMessages.tryEmit("Exported \"$playlistName\" ($count tracks) to .m3u8")
+            }.onFailure { err ->
+                _snackbarMessages.tryEmit("Export failed: ${err.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun importPlaylistFromM3u8(context: Context, sourceUri: Uri) {
+        viewModelScope.launch {
+            val res = M3u8PlaylistCodec.importFromUri(context, sourceUri, allTracks.value)
+            res.onSuccess { imported ->
+                if (imported.matchedTracks.isEmpty()) {
+                    _snackbarMessages.tryEmit("No tracks in .m3u8 matched your local library")
+                } else {
+                    libraryRepository.createPlaylistFromTracks(
+                        name = imported.playlistName,
+                        description = "Imported from .m3u8 (${imported.matchedTracks.size} matched)",
+                        trackIds = imported.matchedTracks.map { it.id }
+                    )
+                    val extra = if (imported.unmatchedCount > 0) " · ${imported.unmatchedCount} unmatched" else ""
+                    _snackbarMessages.tryEmit("Imported \"${imported.playlistName}\" (${imported.matchedTracks.size} tracks$extra)")
+                }
+            }.onFailure { err ->
+                _snackbarMessages.tryEmit("Import failed: ${err.message ?: "invalid .m3u8"}")
+            }
+        }
+    }
+
+    // ---- Deck Theme Preset, Duration Filter & Gapless ----
+
+    fun applyDeckStylePreset(preset: DeckStylePreset) {
+        viewModelScope.launch {
+            settingsRepository.applyDeckStylePreset(preset)
+            _snackbarMessages.tryEmit("Applied ${preset.displayName} Deck Theme")
+        }
+    }
+
+    fun setMinTrackDurationSec(seconds: Int) {
+        viewModelScope.launch { settingsRepository.setMinTrackDurationSec(seconds) }
+    }
+
+    fun setGaplessPlaybackEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setGaplessPlaybackEnabled(enabled) }
     }
 
     // ---- Custom Playlists ----
@@ -1445,10 +1634,24 @@ class PhotonViewModel(
     private fun sortTracks(
         tracks: List<TrackEntity>,
         option: SortOption,
-        direction: SortDirection
+        direction: SortDirection,
+        playCounts: Map<Long, Int> = emptyMap()
     ): List<TrackEntity> {
         val comparator: Comparator<TrackEntity> = when (option) {
             SortOption.CUSTOM_ORDER -> compareBy<TrackEntity> { it.sortOrder }.thenBy { it.dateAdded }
+            SortOption.TITLE -> compareBy<TrackEntity> { it.title.lowercase() }
+            SortOption.DATE_ADDED -> compareBy<TrackEntity> { it.dateAdded }
+            SortOption.DURATION -> compareBy<TrackEntity> { it.durationMs }.thenBy { it.title.lowercase() }
+            SortOption.BITRATE_CODEC -> compareBy<TrackEntity> {
+                when (it.format.uppercase()) {
+                    "WAV" -> 4
+                    "FLAC" -> 3
+                    "OPUS", "AAC" -> 2
+                    else -> 1
+                }
+            }.thenBy { it.bitrateKbps }.thenBy { it.sampleRateHz }
+            SortOption.PLAY_COUNT -> compareBy<TrackEntity> { playCounts[it.id] ?: 0 }
+                .thenBy { it.title.lowercase() }
             SortOption.ARTIST -> compareBy<TrackEntity> { it.artist.lowercase() }
                 .thenBy { it.album.lowercase() }
                 .thenBy { it.title.lowercase() }
@@ -1463,8 +1666,6 @@ class PhotonViewModel(
                 .thenBy { it.title.lowercase() }
             SortOption.RELEASE_YEAR -> compareBy<TrackEntity> { it.releaseYear ?: Int.MIN_VALUE }
                 .thenBy { it.title.lowercase() }
-            SortOption.TITLE -> compareBy<TrackEntity> { it.title.lowercase() }
-            SortOption.DATE_ADDED -> compareBy<TrackEntity> { it.dateAdded }
         }
 
         val sorted = tracks.sortedWith(comparator)

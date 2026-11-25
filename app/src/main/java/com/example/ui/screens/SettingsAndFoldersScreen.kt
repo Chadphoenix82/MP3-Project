@@ -88,6 +88,7 @@ import com.example.ui.components.WidgetStudioCard
 import com.example.ui.theme.AppFontChoice
 import com.example.ui.theme.AppWallpaperPreset
 import com.example.ui.theme.CosmicThemeSkin
+import com.example.ui.theme.DeckStylePreset
 import com.example.ui.theme.LocalPhotonColors
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -95,6 +96,7 @@ import kotlin.math.roundToInt
 private val SUPPORTED_FILE_TYPE_FILTERS = listOf("MP3", "FLAC", "WAV", "OPUS", "M4A", "OGG", "AAC")
 private val QUICK_EXCLUDE_FOLDER_NAMES = listOf("Ringtones", "Notifications", "Alarms", "Voice Notes", "WhatsApp Audio")
 private val PLAYBACK_SPEED_OPTIONS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+private val MIN_DURATION_OPTIONS_SEC = listOf(0, 15, 30, 60, 90)
 
 @Composable
 fun SettingsAndFoldersScreen(
@@ -149,6 +151,9 @@ fun SettingsAndFoldersScreen(
     onCheckUpdatesNow: () -> Unit,
     onClearListeningHistory: () -> Unit,
     onResetSettingsToDefaults: () -> Unit,
+    onApplyDeckStylePreset: (DeckStylePreset) -> Unit = {},
+    onImportAudio: () -> Unit = {},
+    onSetMinTrackDurationSec: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val photonColors = LocalPhotonColors.current
@@ -178,6 +183,7 @@ fun SettingsAndFoldersScreen(
         item(key = "appearance_studio_card") {
             AppearanceCustomizationCard(
                 settings = settings,
+                onApplyDeckStylePreset = onApplyDeckStylePreset,
                 onSelectCosmicSkin = onSelectCosmicSkin,
                 onSetCustomThemeColors = onSetCustomThemeColors,
                 onSetDynamicAlbumColors = onSetDynamicAlbumColors,
@@ -435,23 +441,45 @@ fun SettingsAndFoldersScreen(
                         }
                     }
 
-                    OutlinedButton(
-                        onClick = onDropTestWavIntoWatchedFolder,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .testTag("drop_test_wav_btn"),
-                        shape = RoundedCornerShape(13.dp),
-                        border = BorderStroke(1.dp, photonColors.photonGlow.copy(alpha = 0.6f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(
-                            Icons.Rounded.GraphicEq,
-                            contentDescription = null,
-                            tint = photonColors.photonGlow,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Drop New WAV Into Watched Folder (Test)")
+                        OutlinedButton(
+                            onClick = onImportAudio,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("settings_import_audio_btn"),
+                            shape = RoundedCornerShape(13.dp),
+                            border = BorderStroke(1.dp, photonColors.photonGlow.copy(alpha = 0.6f))
+                        ) {
+                            Icon(
+                                Icons.Rounded.Add,
+                                contentDescription = null,
+                                tint = photonColors.photonGlow,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Import Audio", maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = onDropTestWavIntoWatchedFolder,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("drop_test_wav_btn"),
+                            shape = RoundedCornerShape(13.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.GraphicEq,
+                                contentDescription = null,
+                                tint = photonColors.nebulaAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Test WAV", maxLines = 1)
+                        }
                     }
 
                     // Active Watched Folders List
@@ -536,6 +564,52 @@ fun SettingsAndFoldersScreen(
                             )
                         }
                     }
+
+                    // Minimum Track Duration Filter (exclude ringtones & short notifications)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = if (settings.minTrackDurationSec <= 0) {
+                                "MINIMUM TRACK DURATION FILTER (OFF)"
+                            } else {
+                                "HIDE SHORT CLIPS & RINGTONES (< ${settings.minTrackDurationSec}s)"
+                            },
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = photonColors.photonGlow
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            MIN_DURATION_OPTIONS_SEC.forEach { sec ->
+                                val selected = settings.minTrackDurationSec == sec
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { onSetMinTrackDurationSec(sec) },
+                                    label = {
+                                        Text(
+                                            text = if (sec == 0) "Off" else "${sec}s",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("min_duration_chip_${sec}s"),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = photonColors.photonGlow.copy(alpha = 0.22f),
+                                        selectedLabelColor = photonColors.photonGlow
+                                    ),
+                                    border = FilterChipDefaults.filterChipBorder(
+                                        enabled = true,
+                                        selected = selected,
+                                        borderColor = photonColors.cardBorder,
+                                        selectedBorderColor = photonColors.photonGlow
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = photonColors.cardBorder.copy(alpha = 0.5f))
 
                     // Exclude File Types chips
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

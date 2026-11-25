@@ -49,6 +49,7 @@ import com.example.data.prefs.AppSettings
 import com.example.ui.theme.AppFontChoice
 import com.example.ui.theme.AppWallpaperPreset
 import com.example.ui.theme.CosmicThemeSkin
+import com.example.ui.theme.DeckStylePreset
 import com.example.ui.theme.LocalPhotonColors
 import kotlin.math.roundToInt
 
@@ -75,6 +76,7 @@ private val CUSTOM_ACCENT_SWATCHES: List<Pair<String, Long>> = listOf(
 @Composable
 fun AppearanceCustomizationCard(
     settings: AppSettings,
+    onApplyDeckStylePreset: (DeckStylePreset) -> Unit = {},
     onSelectCosmicSkin: (CosmicThemeSkin) -> Unit,
     onSetCustomThemeColors: (primaryArgb: Long, secondaryArgb: Long, oledBlack: Boolean) -> Unit,
     onSetDynamicAlbumColors: (Boolean) -> Unit,
@@ -118,6 +120,64 @@ fun AppearanceCustomizationCard(
                     )
                 }
             }
+
+            // 0. Deck Typography & Theme Presets (Cyber Studio, Minimalist Hi-Fi, Editorial)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "DECK THEME PRESET (${settings.deckStylePreset?.displayName?.uppercase() ?: "CUSTOM"})",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = photonColors.photonGlow
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    DeckStylePreset.entries.forEach { preset ->
+                        val selected = settings.deckStylePreset == preset
+                        Surface(
+                            onClick = { onApplyDeckStylePreset(preset) },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (selected) photonColors.photonGlow.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(
+                                width = if (selected) 1.6.dp else 0.9.dp,
+                                color = if (selected) photonColors.photonGlow else photonColors.cardBorder
+                            ),
+                            modifier = Modifier
+                                .width(156.dp)
+                                .testTag("deck_preset_${preset.name.lowercase()}")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = preset.displayName,
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontFamily = preset.displayFont.fontFamily,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = if (selected) photonColors.photonGlow else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = preset.subtitle,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = preset.bodyFont.fontFamily
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = photonColors.cardBorder.copy(alpha = 0.5f))
 
             // 1. Cosmic Theme Skins (Horizontal Swatch Cards)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -391,7 +451,7 @@ fun AppearanceCustomizationCard(
 
             HorizontalDivider(color = photonColors.cardBorder.copy(alpha = 0.5f))
 
-            // 2. Custom App Font Picker (5 bundled local Google Fonts with live preview)
+            // 2. Custom App Font Picker (All 7 bundled local Google Fonts with live preview)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -399,7 +459,7 @@ fun AppearanceCustomizationCard(
                 ) {
                     Icon(Icons.Rounded.FontDownload, contentDescription = null, tint = photonColors.photonGlow, modifier = Modifier.size(16.dp))
                     Text(
-                        text = "APP FONT (${settings.appFont.displayName.uppercase()})",
+                        text = "BUNDLED FONTS (${settings.appFont.displayName.uppercase()})",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                         color = photonColors.photonGlow
                     )
