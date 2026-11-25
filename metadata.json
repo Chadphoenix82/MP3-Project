@@ -2,5 +2,7 @@
   "name": "Photon Audio",
   "description": "High-resolution galaxy-themed MP3, FLAC, and WAV music player with graphic equalizer, crossfade transitions, custom playlists, drag-and-drop sorting, sleep timer, and web metadata auto-complete.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

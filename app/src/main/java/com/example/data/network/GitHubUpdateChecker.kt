@@ -13,6 +13,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
+data class GitHubReleaseAssetDto(
+    val name: String = "",
+    @Json(name = "browser_download_url") val browserDownloadUrl: String = "",
+    val size: Long = 0L
+)
+
 data class GitHubReleaseDto(
     @Json(name = "tag_name") val tagName: String = "",
     val name: String? = null,
@@ -20,7 +26,8 @@ data class GitHubReleaseDto(
     val body: String? = null,
     val draft: Boolean = false,
     val prerelease: Boolean = false,
-    @Json(name = "published_at") val publishedAt: String? = null
+    @Json(name = "published_at") val publishedAt: String? = null,
+    val assets: List<GitHubReleaseAssetDto> = emptyList()
 )
 
 data class AppUpdateInfo(
@@ -28,7 +35,10 @@ data class AppUpdateInfo(
     val latestTag: String,
     val releaseTitle: String,
     val releaseNotes: String,
-    val downloadPageUrl: String
+    val downloadPageUrl: String,
+    val apkDownloadUrl: String? = null,
+    val apkFileName: String? = null,
+    val apkSizeBytes: Long? = null
 )
 
 sealed class UpdateCheckOutcome {
@@ -94,6 +104,10 @@ class GitHubUpdateChecker(private val context: Context) {
                 }
 
                 if (isNewerVersion(remoteTag = dto.tagName, localVersion = currentVersion)) {
+                    val apkAsset = dto.assets.firstOrNull { asset ->
+                        asset.name.endsWith(".apk", ignoreCase = true) &&
+                            asset.browserDownloadUrl.startsWith("https://", ignoreCase = true)
+                    }
                     UpdateCheckOutcome.UpdateAvailable(
                         AppUpdateInfo(
                             currentVersion = currentVersion,
@@ -101,7 +115,10 @@ class GitHubUpdateChecker(private val context: Context) {
                             releaseTitle = dto.name?.takeIf { it.isNotBlank() } ?: "Photon Audio ${dto.tagName}",
                             releaseNotes = dto.body?.trim().orEmpty()
                                 .ifBlank { "A new version of Photon Audio is ready on GitHub." },
-                            downloadPageUrl = dto.htmlUrl
+                            downloadPageUrl = dto.htmlUrl,
+                            apkDownloadUrl = apkAsset?.browserDownloadUrl,
+                            apkFileName = apkAsset?.name,
+                            apkSizeBytes = apkAsset?.size?.takeIf { it > 0L }
                         )
                     )
                 } else {

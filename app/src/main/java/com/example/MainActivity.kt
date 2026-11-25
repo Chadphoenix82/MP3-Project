@@ -1119,6 +1119,16 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                    update.apkFileName?.let { apkName ->
+                        val sizeMb = update.apkSizeBytes?.let { bytes ->
+                            String.format(" · %.1f MB", bytes / (1024.0 * 1024.0))
+                        }.orEmpty()
+                        Text(
+                            text = "Direct APK: $apkName$sizeMb",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = photonColors.losslessBadge
+                        )
+                    }
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1134,11 +1144,12 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                 }
             },
             confirmButton = {
+                val targetUrl = update.apkDownloadUrl ?: update.downloadPageUrl
                 Button(
                     onClick = {
                         viewModel.dismissUpdateAlert(skipThisVersion = false)
                         runCatching {
-                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadPageUrl))
+                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl))
                             context.startActivity(browserIntent)
                         }
                     },
@@ -1146,7 +1157,7 @@ private fun PhotonAudioRoot(viewModel: PhotonViewModel) {
                 ) {
                     Icon(Icons.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Download Page")
+                    Text(if (update.apkDownloadUrl != null) "Download APK" else "Download Page")
                 }
             },
             dismissButton = {
