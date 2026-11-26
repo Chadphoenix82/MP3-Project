@@ -1,21 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
+    <!-- Allowlist mode: include only Room database and DataStore preferences.
+         Cached artwork (covers/), wallpapers/, and temporary WAV exports are automatically excluded. -->
     <cloud-backup>
         <include domain="database" path="photon_audio.db" />
         <include domain="file" path="datastore/photon_audio_settings.preferences_pb" />
-        <exclude domain="file" path="covers" />
-        <exclude domain="file" path="wallpapers" />
-        <exclude domain="file" path="PhotonWatchedMusic" />
-        <exclude domain="file" path="PhotonStudioWavs" />
-        <exclude domain="file" path="wav_exports" />
     </cloud-backup>
     <device-transfer>
         <include domain="database" path="photon_audio.db" />
         <include domain="file" path="datastore/photon_audio_settings.preferences_pb" />
-        <exclude domain="file" path="covers" />
-        <exclude domain="file" path="wallpapers" />
-        <exclude domain="file" path="PhotonWatchedMusic" />
-        <exclude domain="file" path="PhotonStudioWavs" />
-        <exclude domain="file" path="wav_exports" />
     </device-transfer>
 </data-extraction-rules>

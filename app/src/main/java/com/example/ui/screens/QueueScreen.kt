@@ -1,8 +1,9 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,11 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowDownward
-import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteSweep
-import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material3.AlertDialog
@@ -30,7 +28,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -41,7 +38,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -49,15 +49,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.example.data.db.TrackEntity
 import com.example.player.PlaybackUiState
-import com.example.ui.components.AudioFormatBadge
-import com.example.ui.components.PhotonAlbumArt
-import com.example.ui.components.PhotonEqualizerBars
+import com.example.ui.components.TrackRowItem
 import com.example.ui.components.formatDurationMs
 import com.example.ui.theme.LocalPhotonColors
 
@@ -70,16 +73,74 @@ fun QueueScreen(
     onRemoveFromQueue: (Int) -> Unit,
     onClearUpcoming: () -> Unit,
     onSaveQueueAsPlaylist: (name: String, description: String) -> Unit,
+    onOpenTrackMenu: (TrackEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val photonColors = LocalPhotonColors.current
-    val queue = playbackState.queue
+    val haptic = LocalHapticFeedback.current
     val currentIndex = playbackState.currentIndex
+
+    var localQueue by remember { mutableStateOf(playbackState.queue) }
+    var draggedQueueIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var itemHeightPx by remember { mutableFloatStateOf(168f) }
     var showSaveDialog by remember { mutableStateOf(false) }
 
-    val upcomingEntries = remember(queue, currentIndex) {
-        if (currentIndex < 0 || currentIndex >= queue.lastIndex) emptyList()
-        else ((currentIndex + 1)..queue.lastIndex).map { idx -> idx to queue[idx] }
+    LaunchedEffect(playbackState.queue) {
+        if (draggedQueueIndex == -1) {
+            localQueue = playbackState.queue
+        }
+    }
+
+    val upcomingStartIndex = (currentIndex + 1).coerceAtLeast(0)
+
+    fun startQueueDrag(queueIdx: Int) {
+        if (queueIdx < upcomingStartIndex || queueIdx > localQueue.lastIndex) return
+        draggedQueueIndex = queueIdx
+        dragOffsetY = 0f
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
+    fun onQueueDragDelta(deltaY: Float) {
+        if (draggedQueueIndex == -1) return
+        dragOffsetY += deltaY
+        val threshold = (itemHeightPx * 0.6f).coerceAtLeast(60f)
+
+        while (dragOffsetY > threshold && draggedQueueIndex < localQueue.lastIndex) {
+            val next = draggedQueueIndex + 1
+            val mutable = localQueue.toMutableList()
+            val item = mutable.removeAt(draggedQueueIndex)
+            mutable.add(next, item)
+            localQueue = mutable
+            draggedQueueIndex = next
+            dragOffsetY -= itemHeightPx
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+
+        while (dragOffsetY < -threshold && draggedQueueIndex > upcomingStartIndex) {
+            val prev = draggedQueueIndex - 1
+            val mutable = localQueue.toMutableList()
+            val item = mutable.removeAt(draggedQueueIndex)
+            mutable.add(prev, item)
+            localQueue = mutable
+            draggedQueueIndex = prev
+            dragOffsetY += itemHeightPx
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
+    fun finishQueueDrag() {
+        if (draggedQueueIndex != -1) {
+            val committed = localQueue.toList()
+            draggedQueueIndex = -1
+            dragOffsetY = 0f
+            onReorderQueue(committed)
+        }
+    }
+
+    val upcomingEntries = remember(localQueue, currentIndex) {
+        if (currentIndex < 0 || currentIndex >= localQueue.lastIndex) emptyList()
+        else ((currentIndex + 1)..localQueue.lastIndex).map { idx -> idx to localQueue[idx] }
     }
 
     val playingNextEntries = remember(upcomingEntries, playbackState.priorityQueueIds) {
@@ -90,18 +151,10 @@ fun QueueScreen(
         upcomingEntries.filter { (_, track) -> track.id !in playbackState.priorityQueueIds }
     }
 
-    val remainingDurationMs = remember(queue, currentIndex, playbackState.positionMs, playbackState.durationMs) {
+    val remainingDurationMs = remember(localQueue, currentIndex, playbackState.positionMs, playbackState.durationMs) {
         val currentRem = (playbackState.durationMs - playbackState.positionMs).coerceAtLeast(0L)
         val upcomingDur = upcomingEntries.sumOf { it.second.durationMs.coerceAtLeast(0L) }
         currentRem + upcomingDur
-    }
-
-    fun swapIndices(fromIdx: Int, toIdx: Int) {
-        if (fromIdx !in queue.indices || toIdx !in queue.indices || fromIdx == toIdx) return
-        val mutable = queue.toMutableList()
-        val moved = mutable.removeAt(fromIdx)
-        mutable.add(toIdx, moved)
-        onReorderQueue(mutable)
     }
 
     Column(
@@ -134,7 +187,7 @@ fun QueueScreen(
                             color = photonColors.photonGlow
                         )
                         Text(
-                            text = "${queue.size} tracks · ${formatDurationMs(remainingDurationMs)} remaining",
+                            text = "${localQueue.size} tracks · ${formatDurationMs(remainingDurationMs)} remaining",
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -145,7 +198,7 @@ fun QueueScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { showSaveDialog = true },
-                        enabled = queue.isNotEmpty(),
+                        enabled = localQueue.isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = photonColors.photonGlow,
                             contentColor = MaterialTheme.colorScheme.onPrimary
@@ -171,7 +224,7 @@ fun QueueScreen(
             }
         }
 
-        if (queue.isEmpty()) {
+        if (localQueue.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -199,25 +252,14 @@ fun QueueScreen(
                         )
                     }
                     item(key = "now_playing_row_${current.id}") {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = photonColors.photonGlow.copy(alpha = 0.14f),
-                            border = BorderStroke(1.2.dp, photonColors.photonGlow),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                PhotonAlbumArt(current.artworkUri, current.title, size = 48.dp, cornerRadius = 10.dp)
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(current.title, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(current.artist, style = MaterialTheme.typography.bodySmall, color = photonColors.photonGlow, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                                PhotonEqualizerBars(isPlaying = playbackState.isPlaying)
-                            }
-                        }
+                        TrackRowItem(
+                            track = current,
+                            isCurrent = true,
+                            isPlaying = playbackState.isPlaying,
+                            onClick = { if (currentIndex >= 0) onJumpToIndex(currentIndex) },
+                            onOpenTrackMenu = onOpenTrackMenu,
+                            rowTestTag = "queue_now_playing_row_${current.id}"
+                        )
                     }
                 }
 
@@ -232,14 +274,30 @@ fun QueueScreen(
                         )
                     }
                     items(playingNextEntries, key = { (idx, t) -> "prio_${idx}_${t.id}" }) { (queueIdx, track) ->
-                        QueueSwipeableRow(
+                        val isDraggingThis = draggedQueueIndex == queueIdx
+                        QueueSwipeableTrackRow(
                             track = track,
-                            canMoveUp = queueIdx > currentIndex + 1,
-                            canMoveDown = queueIdx < queue.lastIndex,
+                            isDragging = isDraggingThis,
+                            dragOffsetY = if (isDraggingThis) dragOffsetY else 0f,
                             onJump = { onJumpToIndex(queueIdx) },
-                            onMoveUp = { swapIndices(queueIdx, queueIdx - 1) },
-                            onMoveDown = { swapIndices(queueIdx, queueIdx + 1) },
-                            onRemove = { onRemoveFromQueue(queueIdx) }
+                            onOpenTrackMenu = onOpenTrackMenu,
+                            onRemove = { onRemoveFromQueue(queueIdx) },
+                            onMeasureHeight = { h -> if (h > 0) itemHeightPx = h.toFloat() },
+                            dragHandleModifier = Modifier.pointerInput(track.id, queueIdx) {
+                                detectDragGestures(
+                                    onDragStart = {
+                                        val latestIdx = localQueue.indexOfFirst { it.id == track.id }
+                                            .takeIf { it >= upcomingStartIndex } ?: queueIdx
+                                        startQueueDrag(latestIdx)
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        onQueueDragDelta(dragAmount.y)
+                                    },
+                                    onDragEnd = { finishQueueDrag() },
+                                    onDragCancel = { finishQueueDrag() }
+                                )
+                            }
                         )
                     }
                 }
@@ -255,14 +313,30 @@ fun QueueScreen(
                         )
                     }
                     items(upNextFromSourceEntries, key = { (idx, t) -> "src_${idx}_${t.id}" }) { (queueIdx, track) ->
-                        QueueSwipeableRow(
+                        val isDraggingThis = draggedQueueIndex == queueIdx
+                        QueueSwipeableTrackRow(
                             track = track,
-                            canMoveUp = queueIdx > currentIndex + 1,
-                            canMoveDown = queueIdx < queue.lastIndex,
+                            isDragging = isDraggingThis,
+                            dragOffsetY = if (isDraggingThis) dragOffsetY else 0f,
                             onJump = { onJumpToIndex(queueIdx) },
-                            onMoveUp = { swapIndices(queueIdx, queueIdx - 1) },
-                            onMoveDown = { swapIndices(queueIdx, queueIdx + 1) },
-                            onRemove = { onRemoveFromQueue(queueIdx) }
+                            onOpenTrackMenu = onOpenTrackMenu,
+                            onRemove = { onRemoveFromQueue(queueIdx) },
+                            onMeasureHeight = { h -> if (h > 0) itemHeightPx = h.toFloat() },
+                            dragHandleModifier = Modifier.pointerInput(track.id, queueIdx) {
+                                detectDragGestures(
+                                    onDragStart = {
+                                        val latestIdx = localQueue.indexOfFirst { it.id == track.id }
+                                            .takeIf { it >= upcomingStartIndex } ?: queueIdx
+                                        startQueueDrag(latestIdx)
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        onQueueDragDelta(dragAmount.y)
+                                    },
+                                    onDragEnd = { finishQueueDrag() },
+                                    onDragCancel = { finishQueueDrag() }
+                                )
+                            }
                         )
                     }
                 }
@@ -272,7 +346,7 @@ fun QueueScreen(
 
     if (showSaveDialog) {
         var name by remember { mutableStateOf("Queue · ${playbackState.queueSourceLabel}") }
-        var desc by remember { mutableStateOf("Saved from Photon Audio Live Queue (${queue.size} tracks)") }
+        var desc by remember { mutableStateOf("Saved from Photon Audio Live Queue (${localQueue.size} tracks)") }
         AlertDialog(
             onDismissRequest = { showSaveDialog = false },
             title = { Text("Save Queue as Playlist") },
@@ -313,16 +387,20 @@ fun QueueScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun QueueSwipeableRow(
+private fun QueueSwipeableTrackRow(
     track: TrackEntity,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
+    isDragging: Boolean,
+    dragOffsetY: Float,
     onJump: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    onRemove: () -> Unit
+    onOpenTrackMenu: (TrackEntity) -> Unit,
+    onRemove: () -> Unit,
+    onMeasureHeight: (Int) -> Unit,
+    dragHandleModifier: Modifier
 ) {
-    val photonColors = LocalPhotonColors.current
+    val liftScale by animateFloatAsState(
+        targetValue = if (isDragging) 1.025f else 1f,
+        label = "queue_drag_scale"
+    )
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.EndToStart) {
@@ -337,6 +415,15 @@ private fun QueueSwipeableRow(
     SwipeToDismissBox(
         state = dismissState,
         enableDismissFromStartToEnd = false,
+        gesturesEnabled = !isDragging,
+        modifier = Modifier
+            .zIndex(if (isDragging) 10f else 0f)
+            .onSizeChanged { onMeasureHeight(it.height) }
+            .graphicsLayer {
+                translationY = dragOffsetY
+                scaleX = liftScale
+                scaleY = liftScale
+            },
         backgroundContent = {
             Box(
                 modifier = Modifier
@@ -350,56 +437,14 @@ private fun QueueSwipeableRow(
             }
         },
         content = {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = photonColors.glassSurface,
-                border = BorderStroke(0.8.dp, photonColors.cardBorder.copy(alpha = 0.65f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable(onClick = onJump)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.DragHandle,
-                        contentDescription = "Reorder handle",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    PhotonAlbumArt(track.artworkUri, track.title, size = 44.dp, cornerRadius = 10.dp)
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = track.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            AudioFormatBadge(track.format)
-                            Text(
-                                text = "${track.artist} · ${formatDurationMs(track.durationMs)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    IconButton(onClick = onMoveUp, enabled = canMoveUp, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Rounded.ArrowUpward, contentDescription = "Move up", modifier = Modifier.size(18.dp))
-                    }
-                    IconButton(onClick = onMoveDown, enabled = canMoveDown, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Rounded.ArrowDownward, contentDescription = "Move down", modifier = Modifier.size(18.dp))
-                    }
-                }
-            }
+            TrackRowItem(
+                track = track,
+                isDragging = isDragging,
+                onClick = onJump,
+                onOpenTrackMenu = onOpenTrackMenu,
+                dragHandleModifier = dragHandleModifier,
+                rowTestTag = "queue_track_row_${track.id}"
+            )
         }
     )
 }

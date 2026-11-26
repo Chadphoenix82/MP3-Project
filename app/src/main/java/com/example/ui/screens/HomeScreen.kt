@@ -1,9 +1,11 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,14 +45,20 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -60,9 +68,14 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.R
 import com.example.data.db.TrackEntity
+import com.example.data.library.GenreTrackCount
+import com.example.data.library.SmartShufflePreview
 import com.example.player.PlaybackUiState
 import com.example.ui.components.AudioFormatBadge
 import com.example.ui.components.PhotonAlbumArt
+import com.example.ui.components.SmartShuffleDashboardCard
+import com.example.ui.components.SmartShufflePreferencesSheet
+import com.example.ui.components.TrackRowItem
 import com.example.ui.components.formatDurationMs
 import com.example.ui.theme.LocalPhotonColors
 
@@ -73,9 +86,19 @@ fun HomeScreen(
     recentlyAddedTracks: List<TrackEntity>,
     mostPlayedTracks: List<Pair<TrackEntity, Int>>,
     forgottenFavorites: List<TrackEntity>,
+    availableGenres: List<GenreTrackCount>,
+    smartShufflePreview: SmartShufflePreview,
+    preferredSmartShuffleGenres: Set<String>,
+    smartShuffleRecentWeight: Float,
     onResumeOrExpandDeck: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onPlayTracks: (List<TrackEntity>, Int, String) -> Unit,
+    onOpenTrackMenu: (TrackEntity) -> Unit,
+    onLaunchSmartShuffle: () -> Unit,
+    onToggleSmartShuffleGenre: (String) -> Unit,
+    onAddCustomSmartShuffleGenre: (String) -> Unit,
+    onClearSmartShuffleGenres: () -> Unit,
+    onUpdateSmartShuffleRecentWeight: (Float) -> Unit,
     onSmartMix25Shuffle: () -> Unit,
     onSmartMixLossless: () -> Unit,
     onSmartMixRecentlyImported: () -> Unit,
@@ -87,6 +110,7 @@ fun HomeScreen(
 ) {
     val photonColors = LocalPhotonColors.current
     val heroTrack = playbackState.currentTrack ?: recentlyAddedTracks.firstOrNull()
+    var showSmartShuffleSheet by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -117,6 +141,7 @@ fun HomeScreen(
                         onPlayTracks(recentlyAddedTracks, 0, "Continue Listening")
                     }
                 },
+                onCardLongPress = { heroTrack?.let(onOpenTrackMenu) },
                 onArtistClick = { heroTrack?.artist?.let(onNavigateToArtist) },
                 onAlbumClick = { heroTrack?.let { onNavigateToAlbum(it.album, it.artist) } },
                 modifier = Modifier.padding(horizontal = 16.dp)
@@ -179,7 +204,22 @@ fun HomeScreen(
             }
         }
 
-        // 2. Smart Auto-Mixes (1-tap queue generators)
+        // 2. Featured Smart Shuffle (Recently Imported + User-Defined Genre Preferences)
+        item(key = "smart_shuffle_featured") {
+            SmartShuffleDashboardCard(
+                preview = smartShufflePreview,
+                availableGenres = availableGenres,
+                preferredGenres = preferredSmartShuffleGenres,
+                recentWeight = smartShuffleRecentWeight,
+                hasTracks = allTracks.isNotEmpty(),
+                onLaunchSmartShuffle = onLaunchSmartShuffle,
+                onToggleGenre = onToggleSmartShuffleGenre,
+                onOpenPreferences = { showSmartShuffleSheet = true },
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+
+        // 3. Smart Auto-Mixes (1-tap queue generators)
         item(key = "smart_auto_mixes") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 HomeSectionHeader(
@@ -242,7 +282,8 @@ fun HomeScreen(
                             HomeTrackTile(
                                 track = track,
                                 badgeText = track.format.uppercase(),
-                                onClick = { onPlayTracks(recentlyAddedTracks, idx, "Recently Added") }
+                                onClick = { onPlayTracks(recentlyAddedTracks, idx, "Recently Added") },
+                                onLongClick = { onOpenTrackMenu(track) }
                             )
                         }
                     }
@@ -268,7 +309,8 @@ fun HomeScreen(
                             HomeTrackTile(
                                 track = track,
                                 badgeText = "$plays plays",
-                                onClick = { onPlayTracks(trackList, idx, "Most Played") }
+                                onClick = { onPlayTracks(trackList, idx, "Most Played") },
+                                onLongClick = { onOpenTrackMenu(track) }
                             )
                         }
                     }
@@ -293,16 +335,57 @@ fun HomeScreen(
                             HomeTrackTile(
                                 track = track,
                                 badgeText = formatDurationMs(track.durationMs),
-                                onClick = { onPlayTracks(forgottenFavorites, idx, "Forgotten Favorites") }
+                                onClick = { onPlayTracks(forgottenFavorites, idx, "Forgotten Favorites") },
+                                onLongClick = { onOpenTrackMenu(track) }
                             )
                         }
                     }
                 }
             }
         }
+
+        // 6. Quick Jump Deck Tracks (reusable TrackRowItem with long-press & overflow menu)
+        if (recentlyAddedTracks.isNotEmpty()) {
+            item(key = "home_quick_tracks_header") {
+                HomeSectionHeader(
+                    icon = Icons.Rounded.GraphicEq,
+                    title = "Quick Deck Picks",
+                    subtitle = "Tap to play · press & hold for actions"
+                )
+            }
+            val quickTracks = recentlyAddedTracks.take(5)
+            itemsIndexed(quickTracks, key = { _, t -> "home_row_${t.id}" }) { idx, track ->
+                TrackRowItem(
+                    track = track,
+                    isCurrent = playbackState.currentTrack?.id == track.id,
+                    isPlaying = playbackState.isPlaying,
+                    onClick = { onPlayTracks(quickTracks, idx, "Home Quick Picks") },
+                    onOpenTrackMenu = onOpenTrackMenu,
+                    rowTestTag = "home_track_row_${track.id}",
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+        }
+    }
+
+    if (showSmartShuffleSheet) {
+        SmartShufflePreferencesSheet(
+            preview = smartShufflePreview,
+            availableGenres = availableGenres,
+            preferredGenres = preferredSmartShuffleGenres,
+            recentWeight = smartShuffleRecentWeight,
+            hasTracks = allTracks.isNotEmpty(),
+            onToggleGenre = onToggleSmartShuffleGenre,
+            onAddCustomGenre = onAddCustomSmartShuffleGenre,
+            onClearGenres = onClearSmartShuffleGenres,
+            onUpdateRecentWeight = onUpdateSmartShuffleRecentWeight,
+            onLaunchSmartShuffle = onLaunchSmartShuffle,
+            onDismiss = { showSmartShuffleSheet = false }
+        )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContinueListeningHeroCard(
     activeTrack: TrackEntity?,
@@ -312,12 +395,14 @@ private fun ContinueListeningHeroCard(
     durationMs: Long,
     onPrimaryAction: () -> Unit,
     onCardTap: () -> Unit,
+    onCardLongPress: () -> Unit,
     onArtistClick: () -> Unit,
     onAlbumClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val photonColors = LocalPhotonColors.current
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val progress = if (durationMs > 0L) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
 
     Surface(
@@ -328,7 +413,15 @@ private fun ContinueListeningHeroCard(
             .fillMaxWidth()
             .height(206.dp)
             .clip(RoundedCornerShape(26.dp))
-            .clickable(onClick = onCardTap)
+            .combinedClickable(
+                onClick = onCardTap,
+                onLongClick = {
+                    if (activeTrack != null) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onCardLongPress()
+                    }
+                }
+            )
             .testTag("home_continue_listening_hero")
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -592,13 +685,16 @@ private fun SmartAutoMixCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HomeTrackTile(
     track: TrackEntity,
     badgeText: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val photonColors = LocalPhotonColors.current
+    val haptic = LocalHapticFeedback.current
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = photonColors.glassSurface,
@@ -606,7 +702,13 @@ private fun HomeTrackTile(
         modifier = Modifier
             .width(142.dp)
             .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                }
+            )
     ) {
         Column(
             modifier = Modifier.padding(10.dp),

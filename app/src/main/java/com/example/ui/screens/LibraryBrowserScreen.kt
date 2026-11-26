@@ -74,9 +74,8 @@ import com.example.data.db.TrackEntity
 import com.example.data.db.WatchedFolderEntity
 import com.example.data.model.SortDirection
 import com.example.data.model.SortOption
-import com.example.ui.components.AudioFormatBadge
 import com.example.ui.components.PhotonAlbumArt
-import com.example.ui.components.PhotonEqualizerBars
+import com.example.ui.components.TrackRowItem
 import com.example.ui.components.formatDurationMs
 import com.example.ui.theme.LocalPhotonColors
 import kotlinx.coroutines.launch
@@ -117,10 +116,7 @@ fun LibraryBrowserScreen(
     onToggleSortDirection: () -> Unit,
     onPlayTracks: (List<TrackEntity>, Int, String) -> Unit,
     onShuffleTracks: (List<TrackEntity>, String) -> Unit,
-    onPlayNext: (TrackEntity) -> Unit,
-    onToggleFavorite: (TrackEntity) -> Unit,
-    onAddToPlaylist: (TrackEntity) -> Unit,
-    onInspectTrack: (TrackEntity) -> Unit,
+    onOpenTrackMenu: (TrackEntity) -> Unit,
     onNavigateToAlbum: (String, String?) -> Unit,
     onNavigateToArtist: (String) -> Unit,
     onImportAudio: () -> Unit,
@@ -321,18 +317,14 @@ fun LibraryBrowserScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             itemsIndexed(tracks, key = { _, t -> t.id }) { idx, track ->
-                                LibraryTrackItemRow(
+                                TrackRowItem(
                                     track = track,
                                     playCount = playCountMap[track.id] ?: 0,
                                     isCurrent = track.id == currentTrackId,
                                     isPlaying = isPlaying,
                                     onClick = { onPlayTracks(tracks, idx, "Library Tracks") },
-                                    onPlayNext = { onPlayNext(track) },
-                                    onToggleFavorite = { onToggleFavorite(track) },
-                                    onAddToPlaylist = { onAddToPlaylist(track) },
-                                    onInspect = { onInspectTrack(track) },
-                                    onOpenArtist = { onNavigateToArtist(track.artist) },
-                                    onOpenAlbum = { onNavigateToAlbum(track.album, track.artist) }
+                                    onOpenTrackMenu = onOpenTrackMenu,
+                                    rowTestTag = "library_track_row_${track.id}"
                                 )
                             }
                         }
@@ -529,111 +521,6 @@ private fun AlphabetFastScrubber(
     }
 }
 
-@Composable
-private fun LibraryTrackItemRow(
-    track: TrackEntity,
-    playCount: Int,
-    isCurrent: Boolean,
-    isPlaying: Boolean,
-    onClick: () -> Unit,
-    onPlayNext: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onAddToPlaylist: () -> Unit,
-    onInspect: () -> Unit,
-    onOpenArtist: () -> Unit,
-    onOpenAlbum: () -> Unit
-) {
-    val photonColors = LocalPhotonColors.current
-    var menuExpanded by remember { mutableStateOf(false) }
-
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = if (isCurrent) photonColors.photonGlow.copy(alpha = 0.14f) else photonColors.glassSurface,
-        border = BorderStroke(
-            width = if (isCurrent) 1.2.dp else 0.8.dp,
-            color = if (isCurrent) photonColors.photonGlow else photonColors.cardBorder.copy(alpha = 0.65f)
-        ),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            PhotonAlbumArt(track.artworkUri, track.title, size = 48.dp, cornerRadius = 10.dp)
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = track.title,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = if (isCurrent) photonColors.photonGlow else MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    AudioFormatBadge(track.format)
-                    Text(
-                        text = buildString {
-                            append(track.artist)
-                            append(" · ")
-                            append(formatDurationMs(track.durationMs))
-                            if (playCount > 0) append(" · ${playCount}x")
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            if (isCurrent) {
-                PhotonEqualizerBars(isPlaying = isPlaying)
-            }
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Rounded.MoreVert, contentDescription = "Track actions")
-                }
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Play Next") },
-                        leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, contentDescription = null) },
-                        onClick = { menuExpanded = false; onPlayNext() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (track.isFavorite) "Remove Favorite" else "Favorite") },
-                        leadingIcon = { Icon(if (track.isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, contentDescription = null) },
-                        onClick = { menuExpanded = false; onToggleFavorite() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Add to Playlist") },
-                        leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, contentDescription = null) },
-                        onClick = { menuExpanded = false; onAddToPlaylist() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Lyrics & Tag Inspector") },
-                        leadingIcon = { Icon(Icons.Rounded.EditNote, contentDescription = null) },
-                        onClick = { menuExpanded = false; onInspect() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Go to Artist") },
-                        leadingIcon = { Icon(Icons.Rounded.Person, contentDescription = null) },
-                        onClick = { menuExpanded = false; onOpenArtist() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Go to Album") },
-                        leadingIcon = { Icon(Icons.Rounded.Album, contentDescription = null) },
-                        onClick = { menuExpanded = false; onOpenAlbum() }
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun CollectionSummaryCard(

@@ -12,12 +12,16 @@ import com.example.data.db.PlaylistWithSummary
 import com.example.data.db.TrackEntity
 import com.example.data.db.WatchedFolderEntity
 import com.example.data.library.FolderMonitorStatus
+import com.example.data.library.GenreTrackCount
 import com.example.data.library.LibraryRepository
 import com.example.data.library.M3u8PlaylistCodec
 import com.example.data.library.ParsedLyrics
 import com.example.data.library.SmartQueueEngine
 import com.example.data.library.SmartQueueSuggestion
+import com.example.data.library.SmartShuffleEngine
+import com.example.data.library.SmartShufflePreview
 import com.example.data.library.StudioWavSampleType
+import com.example.data.library.TrackUtilityActions
 import com.example.data.model.BatchMetadataPatch
 import com.example.data.model.CrossfadeCurveShape
 import com.example.data.model.EqualizerPreset
@@ -139,6 +143,29 @@ class PhotonViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
+
+    val availableGenres: StateFlow<List<GenreTrackCount>> = allTracks
+        .map { tracks -> SmartShuffleEngine.extractAvailableGenres(tracks) }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val smartShufflePreview: StateFlow<SmartShufflePreview> = combine(
+        allTracks,
+        settings
+    ) { tracks, appSettings ->
+        SmartShuffleEngine.buildPreview(
+            allTracks = tracks,
+            preferredGenres = appSettings.smartShuffleGenres,
+            recentWeight = appSettings.smartShuffleRecentWeight
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = SmartShufflePreview()
+    )
 
     val favoriteTracks: StateFlow<List<TrackEntity>> = allTracks
         .map { list -> list.filter { it.isFavorite } }
@@ -729,6 +756,38 @@ class PhotonViewModel(
         }
     }
 
+    fun shareTrackAudio(context: Context, track: TrackEntity) {
+        val outcome = TrackUtilityActions.shareTrack(context, track)
+        if (!outcome.success) {
+            _snackbarMessages.tryEmit(outcome.message)
+        }
+    }
+
+    fun setTrackAsRingtone(context: Context, track: TrackEntity) {
+        viewModelScope.launch {
+            val outcome = TrackUtilityActions.setTrackAsRingtone(context, track)
+            _snackbarMessages.tryEmit(outcome.message)
+        }
+    }
+
+    fun deleteTrackFromDevice(context: Context, track: TrackEntity) {
+        viewModelScope.launch {
+            val fileDeleted = TrackUtilityActions.deletePhysicalAudioFile(context, track)
+            libraryRepository.deleteTrack(track.id)
+            val queue = playbackState.value.queue
+            val idxInQueue = queue.indexOfFirst { it.id == track.id }
+            if (idxInQueue >= 0) {
+                playerController.removeFromQueue(idxInQueue)
+            }
+            val msg = if (fileDeleted) {
+                "Deleted \"${track.title}\" from device and library"
+            } else {
+                "Removed \"${track.title}\" from library (device storage protected by system)"
+            }
+            _snackbarMessages.tryEmit(msg)
+        }
+    }
+
     // ---- Drag-and-Drop Reordering ----
 
     fun persistLibraryOrder(orderedTracks: List<TrackEntity>) {
@@ -799,6 +858,61 @@ class PhotonViewModel(
         }
         playTracks(pool, 0, sourceLabel = "Recently Imported")
         _snackbarMessages.tryEmit("Queued ${pool.size} recently imported tracks")
+    }
+
+    // ---- Smart Shuffle (Recently Imported + User Genre Preferences) ----
+
+    fun playSmartShuffle() {
+        val pool = allTracks.value
+        if (pool.isEmpty()) {
+            _snackbarMessages.tryEmit("Import or generate tracks first to launch Smart Shuffle")
+            return
+        }
+        val currentSettings = settings.value
+        val result = SmartShuffleEngine.buildQueue(
+            allTracks = pool,
+            preferredGenres = currentSettings.smartShuffleGenres,
+            recentWeight = currentSettings.smartShuffleRecentWeight
+        )
+        if (result.tracks.isEmpty()) {
+            _snackbarMessages.tryEmit("No tracks available for Smart Shuffle yet")
+            return
+        }
+        playTracks(result.tracks, 0, sourceLabel = result.sourceLabel)
+        val detail = if (result.activeGenres.isEmpty()) {
+            "${result.recentlyImportedCount} recent imports blended"
+        } else {
+            "${result.recentlyImportedCount} recent · ${result.genreMatchedCount} genre matches"
+        }
+        _snackbarMessages.tryEmit("Smart Shuffle queued ${result.tracks.size} tracks ($detail)")
+    }
+
+    fun toggleSmartShuffleGenre(genre: String) {
+        viewModelScope.launch {
+            settingsRepository.toggleSmartShuffleGenre(genre)
+        }
+    }
+
+    fun addCustomSmartShuffleGenre(genre: String) {
+        val cleaned = genre.trim()
+        if (cleaned.isEmpty()) return
+        viewModelScope.launch {
+            settingsRepository.addSmartShuffleGenre(cleaned)
+            _snackbarMessages.tryEmit("Added \"$cleaned\" to Smart Shuffle genres")
+        }
+    }
+
+    fun clearSmartShuffleGenres() {
+        viewModelScope.launch {
+            settingsRepository.clearSmartShuffleGenres()
+            _snackbarMessages.tryEmit("Cleared Smart Shuffle genre filters")
+        }
+    }
+
+    fun setSmartShuffleRecentWeight(weight: Float) {
+        viewModelScope.launch {
+            settingsRepository.setSmartShuffleRecentWeight(weight)
+        }
     }
 
     // ---- Audio Lab Studio WAV Samples ----

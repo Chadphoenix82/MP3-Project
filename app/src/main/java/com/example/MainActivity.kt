@@ -92,6 +92,8 @@ import com.example.ui.PhotonViewModel
 import com.example.ui.components.GalaxyBackdrop
 import com.example.ui.navigation.PhotonDeepLinks
 import com.example.ui.navigation.PhotonNavKey
+import com.example.ui.components.DeleteTrackConfirmationDialog
+import com.example.ui.components.TrackActionBottomSheet
 import com.example.ui.screens.ArtistAlbumDetailScreen
 import com.example.ui.screens.AudioLabModalSheet
 import com.example.ui.screens.CollectionDetailTarget
@@ -208,6 +210,8 @@ private fun PhotonAudioDeckRoot(
     val tracks by viewModel.filteredSortedTracks.collectAsStateWithLifecycle()
     val allTracks by viewModel.allTracks.collectAsStateWithLifecycle()
     val recentlyAddedTracks by viewModel.recentlyAddedTracks.collectAsStateWithLifecycle()
+    val availableGenres by viewModel.availableGenres.collectAsStateWithLifecycle()
+    val smartShufflePreview by viewModel.smartShufflePreview.collectAsStateWithLifecycle()
     val recentlyPlayedTracks by viewModel.recentlyPlayedTracks.collectAsStateWithLifecycle()
     val mostPlayedTracks by viewModel.mostPlayedTracks.collectAsStateWithLifecycle()
     val forgottenFavorites by viewModel.forgottenFavorites.collectAsStateWithLifecycle()
@@ -240,7 +244,15 @@ private fun PhotonAudioDeckRoot(
     var showAudioLabSheet by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var trackForPlaylistPicker by remember { mutableStateOf<TrackEntity?>(null) }
+    var trackIdForActionSheet by remember { mutableStateOf<Long?>(null) }
+    var trackFallbackForActionSheet by remember { mutableStateOf<TrackEntity?>(null) }
+    var trackPendingDeviceDelete by remember { mutableStateOf<TrackEntity?>(null) }
     var apiPasswordDialogMode by remember { mutableStateOf<ApiPasswordDialogMode?>(null) }
+
+    val openTrackActionMenu: (TrackEntity) -> Unit = { track ->
+        trackIdForActionSheet = track.id
+        trackFallbackForActionSheet = track
+    }
 
     // Cover Art & M3U8 SAF pending state
     var pendingCoverTrackId by remember { mutableStateOf<Long?>(null) }
@@ -558,6 +570,10 @@ private fun PhotonAudioDeckRoot(
                                 recentlyAddedTracks = recentlyAddedTracks,
                                 mostPlayedTracks = mostPlayedTracks,
                                 forgottenFavorites = forgottenFavorites,
+                                availableGenres = availableGenres,
+                                smartShufflePreview = smartShufflePreview,
+                                preferredSmartShuffleGenres = settings.smartShuffleGenres,
+                                smartShuffleRecentWeight = settings.smartShuffleRecentWeight,
                                 onResumeOrExpandDeck = {
                                     if (playbackState.currentTrack != null) {
                                         nowPlayingExpanded = true
@@ -570,6 +586,12 @@ private fun PhotonAudioDeckRoot(
                                 onPlayTracks = { list, index, label ->
                                     viewModel.playTracks(list, index, label)
                                 },
+                                onOpenTrackMenu = openTrackActionMenu,
+                                onLaunchSmartShuffle = viewModel::playSmartShuffle,
+                                onToggleSmartShuffleGenre = viewModel::toggleSmartShuffleGenre,
+                                onAddCustomSmartShuffleGenre = viewModel::addCustomSmartShuffleGenre,
+                                onClearSmartShuffleGenres = viewModel::clearSmartShuffleGenres,
+                                onUpdateSmartShuffleRecentWeight = viewModel::setSmartShuffleRecentWeight,
                                 onSmartMix25Shuffle = viewModel::playSmartMix25Shuffle,
                                 onSmartMixLossless = viewModel::playSmartMixLosslessOnly,
                                 onSmartMixRecentlyImported = viewModel::playSmartMixRecentlyImported,
@@ -598,13 +620,7 @@ private fun PhotonAudioDeckRoot(
                                 onToggleSortDirection = viewModel::toggleSortDirection,
                                 onPlayTracks = { list, idx, src -> viewModel.playTracks(list, idx, src) },
                                 onShuffleTracks = { list, src -> viewModel.playShuffled(list, src) },
-                                onPlayNext = viewModel::playNextFromSmartQueue,
-                                onToggleFavorite = viewModel::toggleFavorite,
-                                onAddToPlaylist = { trackForPlaylistPicker = it },
-                                onInspectTrack = { track ->
-                                    viewModel.selectTrackForEditor(track)
-                                    pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
-                                },
+                                onOpenTrackMenu = openTrackActionMenu,
                                 onNavigateToAlbum = { album, artist ->
                                     pushRoute(PhotonNavKey.AlbumDetailKey(album, artist))
                                 },
@@ -623,6 +639,8 @@ private fun PhotonAudioDeckRoot(
                                 allTracks = allTracks,
                                 selectedPlaylistId = selectedPlaylistId,
                                 selectedPlaylistTracks = selectedPlaylistTracks,
+                                currentTrackId = playbackState.currentTrack?.id,
+                                isPlaying = playbackState.isPlaying,
                                 onSelectPlaylist = viewModel::selectPlaylist,
                                 onCreatePlaylist = viewModel::createPlaylist,
                                 onDeletePlaylist = viewModel::deletePlaylist,
@@ -630,6 +648,7 @@ private fun PhotonAudioDeckRoot(
                                 onRemoveTrackFromPlaylist = viewModel::removeTrackFromPlaylist,
                                 onPlayTracks = { list, idx, src -> viewModel.playTracks(list, idx, src) },
                                 onShuffleTracks = { list, src -> viewModel.playShuffled(list, src) },
+                                onOpenTrackMenu = openTrackActionMenu,
                                 onRequestExportM3u8 = { name, list ->
                                     pendingM3u8Export = name to list
                                     val safeFile = name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
@@ -650,17 +669,14 @@ private fun PhotonAudioDeckRoot(
                                 allTracks = allTracks,
                                 recentlyPlayedTracks = recentlyPlayedTracks,
                                 playlists = playlists,
+                                currentTrackId = playbackState.currentTrack?.id,
+                                isPlaying = playbackState.isPlaying,
                                 onQueryChange = viewModel::updateSearchQuery,
                                 onCommitQuery = viewModel::commitSearchQuery,
                                 onRemoveHistoryItem = viewModel::removeSearchHistoryItem,
                                 onClearHistory = viewModel::clearSearchHistory,
                                 onPlayTracks = { list, idx, src -> viewModel.playTracks(list, idx, src) },
-                                onPlayNext = viewModel::playNextFromSmartQueue,
-                                onAddToQueue = viewModel::addSuggestionToQueue,
-                                onInspectTrack = { track ->
-                                    viewModel.selectTrackForEditor(track)
-                                    pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
-                                },
+                                onOpenTrackMenu = openTrackActionMenu,
                                 onNavigateToAlbum = { album, artist ->
                                     pushRoute(PhotonNavKey.AlbumDetailKey(album, artist))
                                 },
@@ -685,13 +701,8 @@ private fun PhotonAudioDeckRoot(
                                 onNavigateToAlbum = { album, artist -> pushRoute(PhotonNavKey.AlbumDetailKey(album, artist)) },
                                 onPlayTracks = { list, idx -> viewModel.playTracks(list, idx, key.albumId) },
                                 onShuffleTracks = { list -> viewModel.playShuffled(list, "${key.albumId} (Shuffled)") },
-                                onPlayNext = viewModel::playNextFromSmartQueue,
                                 onToggleFavorite = viewModel::toggleFavorite,
-                                onAddToPlaylist = { trackForPlaylistPicker = it },
-                                onEditTrackMetadata = { track ->
-                                    viewModel.selectTrackForEditor(track)
-                                    pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
-                                },
+                                onOpenTrackMenu = openTrackActionMenu,
                                 onEditAlbumMetadata = { _, anchorTrack ->
                                     viewModel.selectTrackForEditor(anchorTrack)
                                     pushRoute(PhotonNavKey.LyricsInspectorKey(anchorTrack.id))
@@ -710,13 +721,8 @@ private fun PhotonAudioDeckRoot(
                                 onNavigateToAlbum = { album, artist -> pushRoute(PhotonNavKey.AlbumDetailKey(album, artist)) },
                                 onPlayTracks = { list, idx -> viewModel.playTracks(list, idx, key.artistId) },
                                 onShuffleTracks = { list -> viewModel.playShuffled(list, "${key.artistId} (Shuffled)") },
-                                onPlayNext = viewModel::playNextFromSmartQueue,
                                 onToggleFavorite = viewModel::toggleFavorite,
-                                onAddToPlaylist = { trackForPlaylistPicker = it },
-                                onEditTrackMetadata = { track ->
-                                    viewModel.selectTrackForEditor(track)
-                                    pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
-                                },
+                                onOpenTrackMenu = openTrackActionMenu,
                                 onEditAlbumMetadata = { _, anchorTrack ->
                                     viewModel.selectTrackForEditor(anchorTrack)
                                     pushRoute(PhotonNavKey.LyricsInspectorKey(anchorTrack.id))
@@ -731,7 +737,8 @@ private fun PhotonAudioDeckRoot(
                                 onReorderQueue = viewModel::reorderActiveQueue,
                                 onRemoveFromQueue = viewModel::removeTrackFromActiveQueue,
                                 onClearUpcoming = viewModel::clearUpcomingQueue,
-                                onSaveQueueAsPlaylist = viewModel::saveActiveQueueAsPlaylist
+                                onSaveQueueAsPlaylist = viewModel::saveActiveQueueAsPlaylist,
+                                onOpenTrackMenu = openTrackActionMenu
                             )
                         }
 
@@ -1011,6 +1018,56 @@ private fun PhotonAudioDeckRoot(
             onSelectEndOfTrack = viewModel::startSleepTimerEndOfTrack,
             onCancelTimer = viewModel::cancelSleepTimer,
             onDismiss = { showSleepTimerDialog = false }
+        )
+    }
+
+    // Universal Press-and-Hold Track Action Sheet (reacts live to Room updates like Favorite toggles)
+    val activeActionSheetTrack = remember(trackIdForActionSheet, allTracks, trackFallbackForActionSheet) {
+        val targetId = trackIdForActionSheet ?: return@remember null
+        allTracks.firstOrNull { it.id == targetId } ?: trackFallbackForActionSheet
+    }
+    activeActionSheetTrack?.let { selectedTrack ->
+        TrackActionBottomSheet(
+            track = selectedTrack,
+            onDismiss = {
+                trackIdForActionSheet = null
+                trackFallbackForActionSheet = null
+            },
+            onToggleFavorite = viewModel::toggleFavorite,
+            onPlayNext = viewModel::playNextFromSmartQueue,
+            onAddToQueue = viewModel::addSuggestionToQueue,
+            onAddToPlaylist = { trackForPlaylistPicker = it },
+            onGoToAlbum = { album, artist ->
+                pushRoute(PhotonNavKey.AlbumDetailKey(album, artist))
+            },
+            onGoToArtist = { artist ->
+                pushRoute(PhotonNavKey.ArtistDetailKey(artist))
+            },
+            onOpenLyricsAndTagEditor = { track ->
+                viewModel.selectTrackForEditor(track)
+                pushRoute(PhotonNavKey.LyricsInspectorKey(track.id))
+            },
+            onShareAudioFile = { track ->
+                viewModel.shareTrackAudio(context, track)
+            },
+            onSetAsRingtone = { track ->
+                viewModel.setTrackAsRingtone(context, track)
+            },
+            onRequestDeleteFromDevice = { track ->
+                trackPendingDeviceDelete = track
+            }
+        )
+    }
+
+    // Delete from Device Confirmation Dialog
+    trackPendingDeviceDelete?.let { doomedTrack ->
+        DeleteTrackConfirmationDialog(
+            track = doomedTrack,
+            onConfirmDelete = {
+                viewModel.deleteTrackFromDevice(context, doomedTrack)
+                trackPendingDeviceDelete = null
+            },
+            onDismiss = { trackPendingDeviceDelete = null }
         )
     }
 

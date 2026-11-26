@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.os.Build
+import android.view.HapticFeedbackConstants
+import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -108,6 +111,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -139,6 +143,25 @@ import kotlin.math.roundToInt
 
 private enum class GestureAxis { NONE, HORIZONTAL_SKIP, VERTICAL_VOLUME }
 
+private enum class DeckHapticType { PLAY_PAUSE, TRACK_SEEK, LIGHT_TICK }
+
+private fun View.performDeckHaptic(type: DeckHapticType) {
+    val constant = when (type) {
+        DeckHapticType.PLAY_PAUSE -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                HapticFeedbackConstants.CONFIRM
+            } else {
+                HapticFeedbackConstants.CONTEXT_CLICK
+            }
+        }
+        DeckHapticType.TRACK_SEEK -> HapticFeedbackConstants.CONTEXT_CLICK
+        DeckHapticType.LIGHT_TICK -> HapticFeedbackConstants.CLOCK_TICK
+    }
+    if (!performHapticFeedback(constant)) {
+        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+    }
+}
+
 /**
  * Persistent mini-player bar with quick swipe-left/right track skip gesture.
  */
@@ -156,6 +179,7 @@ fun PhotonMiniPlayerBar(
     val track = playbackState.currentTrack ?: return
     val photonColors = LocalPhotonColors.current
     val haptic = LocalHapticFeedback.current
+    val view = LocalView.current
     var dragAccumX by remember { mutableFloatStateOf(0f) }
     var dragAccumY by remember { mutableFloatStateOf(0f) }
 
@@ -268,14 +292,20 @@ fun PhotonMiniPlayerBar(
                 }
 
                 IconButton(
-                    onClick = onSkipPrevious,
+                    onClick = {
+                        view.performDeckHaptic(DeckHapticType.TRACK_SEEK)
+                        onSkipPrevious()
+                    },
                     modifier = Modifier.testTag("mini_prev_button")
                 ) {
                     Icon(Icons.Rounded.SkipPrevious, contentDescription = "Previous track")
                 }
 
                 Surface(
-                    onClick = onTogglePlayPause,
+                    onClick = {
+                        view.performDeckHaptic(DeckHapticType.PLAY_PAUSE)
+                        onTogglePlayPause()
+                    },
                     shape = CircleShape,
                     color = photonColors.photonGlow,
                     modifier = Modifier
@@ -292,7 +322,10 @@ fun PhotonMiniPlayerBar(
                 }
 
                 IconButton(
-                    onClick = onSkipNext,
+                    onClick = {
+                        view.performDeckHaptic(DeckHapticType.TRACK_SEEK)
+                        onSkipNext()
+                    },
                     modifier = Modifier.testTag("mini_next_button")
                 ) {
                     Icon(Icons.Rounded.SkipNext, contentDescription = "Next track")
@@ -361,6 +394,7 @@ fun NowPlayingScreen(
     val basePhotonColors = LocalPhotonColors.current
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val view = LocalView.current
     val eqEnabled = settings.eqEnabled
     val eqPresetName = settings.eqPresetName
     val eqBandRatios = settings.eqBandRatios
@@ -1055,6 +1089,7 @@ fun NowPlayingScreen(
                     )
                         Surface(
                             onClick = {
+                                view.performDeckHaptic(DeckHapticType.LIGHT_TICK)
                                 when {
                                     playbackState.abLoopActive -> onClearAbLoop()
                                     playbackState.abLoopStartMs != null -> onSetAbLoopEnd()
@@ -1112,7 +1147,10 @@ fun NowPlayingScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(
-                    onClick = onToggleShuffle,
+                    onClick = {
+                        view.performDeckHaptic(DeckHapticType.LIGHT_TICK)
+                        onToggleShuffle()
+                    },
                     modifier = Modifier.testTag("now_playing_shuffle_btn")
                 ) {
                     Icon(
@@ -1123,7 +1161,10 @@ fun NowPlayingScreen(
                 }
 
                 IconButton(
-                    onClick = onSkipPrevious,
+                    onClick = {
+                        view.performDeckHaptic(DeckHapticType.TRACK_SEEK)
+                        onSkipPrevious()
+                    },
                     modifier = Modifier
                         .size(54.dp)
                         .testTag("now_playing_prev_btn")
@@ -1170,7 +1211,7 @@ fun NowPlayingScreen(
                             interactionSource = playInteraction,
                             indication = null,
                             onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                view.performDeckHaptic(DeckHapticType.PLAY_PAUSE)
                                 onTogglePlayPause()
                             }
                         )
@@ -1186,7 +1227,10 @@ fun NowPlayingScreen(
                 }
 
                 IconButton(
-                    onClick = onSkipNext,
+                    onClick = {
+                        view.performDeckHaptic(DeckHapticType.TRACK_SEEK)
+                        onSkipNext()
+                    },
                     modifier = Modifier
                         .size(54.dp)
                         .testTag("now_playing_next_btn")
@@ -1199,7 +1243,10 @@ fun NowPlayingScreen(
                 }
 
                 IconButton(
-                    onClick = onCycleRepeat,
+                    onClick = {
+                        view.performDeckHaptic(DeckHapticType.LIGHT_TICK)
+                        onCycleRepeat()
+                    },
                     modifier = Modifier.testTag("now_playing_repeat_btn")
                 ) {
                     Icon(

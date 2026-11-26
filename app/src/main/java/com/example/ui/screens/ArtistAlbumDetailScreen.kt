@@ -68,9 +68,8 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.db.TrackEntity
-import com.example.ui.components.AudioFormatBadge
 import com.example.ui.components.PhotonAlbumArt
-import com.example.ui.components.PhotonEqualizerBars
+import com.example.ui.components.TrackRowItem
 import com.example.ui.components.formatDurationMs
 import com.example.ui.theme.LocalPhotonColors
 
@@ -98,10 +97,8 @@ fun ArtistAlbumDetailScreen(
     onNavigateToAlbum: (albumName: String, preferredArtist: String?) -> Unit,
     onPlayTracks: (List<TrackEntity>, Int) -> Unit,
     onShuffleTracks: (List<TrackEntity>) -> Unit,
-    onPlayNext: (TrackEntity) -> Unit,
     onToggleFavorite: (TrackEntity) -> Unit,
-    onAddToPlaylist: (TrackEntity) -> Unit,
-    onEditTrackMetadata: (TrackEntity) -> Unit,
+    onOpenTrackMenu: (TrackEntity) -> Unit,
     onEditAlbumMetadata: (albumName: String, anchorTrack: TrackEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -524,163 +521,30 @@ fun ArtistAlbumDetailScreen(
         } else {
             itemsIndexed(matchedTracks, key = { _, track -> track.id }) { index, track ->
                 val isActive = track.id == currentTrackId
-                var menuExpanded by remember { mutableStateOf(false) }
-
-                Surface(
-                    onClick = { onPlayTracks(matchedTracks, index) },
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (isActive) {
-                        photonColors.photonGlow.copy(alpha = 0.14f)
-                    } else {
-                        photonColors.glassSurface
-                    },
-                    border = BorderStroke(
-                        width = if (isActive) 1.2.dp else 0.8.dp,
-                        color = if (isActive) photonColors.photonGlow else photonColors.cardBorder
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("collection_track_item_${track.id}")
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (target is CollectionDetailTarget.Album) {
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (isActive) photonColors.photonGlow.copy(alpha = 0.22f)
-                                        else MaterialTheme.colorScheme.surfaceContainerHigh
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (isActive && isPlaying) {
-                                    PhotonEqualizerBars(isPlaying = true)
-                                } else {
-                                    Text(
-                                        text = String.format("%02d", track.trackNumber ?: (index + 1)),
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = if (isActive) photonColors.photonGlow else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
+                TrackRowItem(
+                    track = track,
+                    isCurrent = isActive,
+                    isPlaying = isPlaying,
+                    trackNumberBadge = if (target is CollectionDetailTarget.Album) {
+                        track.trackNumber ?: (index + 1)
+                    } else null,
+                    subtitleOverride = buildString {
+                        if (target is CollectionDetailTarget.Artist) {
+                            append(track.album)
                         } else {
-                            Box(contentAlignment = Alignment.Center) {
-                                PhotonAlbumArt(
-                                    artworkUri = track.artworkUri,
-                                    contentDescription = "Cover for ${track.title}",
-                                    size = 44.dp,
-                                    cornerRadius = 10.dp,
-                                    isPlaying = isActive && isPlaying
-                                )
-                            }
+                            append(track.artist)
                         }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = track.title,
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = if (isActive) photonColors.photonGlow else MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-                                AudioFormatBadge(format = track.format)
-                            }
-                            Text(
-                                text = buildString {
-                                    if (target is CollectionDetailTarget.Artist) {
-                                        append(track.album)
-                                    } else {
-                                        append(track.artist)
-                                    }
-                                    if (track.durationMs > 0L) {
-                                        append(" · ")
-                                        append(formatDurationMs(track.durationMs))
-                                    }
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        if (track.durationMs > 0L) {
+                            append(" · ")
+                            append(formatDurationMs(track.durationMs))
                         }
-
-                        IconButton(
-                            onClick = { onToggleFavorite(track) },
-                            modifier = Modifier.size(44.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (track.isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                contentDescription = if (track.isFavorite) "Remove from favorites" else "Add to favorites",
-                                tint = if (track.isFavorite) Color(0xFFFF5C8A) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        Box {
-                            IconButton(
-                                onClick = { menuExpanded = true },
-                                modifier = Modifier.size(44.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.MoreVert,
-                                    contentDescription = "Track options",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = menuExpanded,
-                                onDismissRequest = { menuExpanded = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Play Next") },
-                                    leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, contentDescription = null) },
-                                    onClick = {
-                                        menuExpanded = false
-                                        onPlayNext(track)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Add to Playlist") },
-                                    leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, contentDescription = null) },
-                                    onClick = {
-                                        menuExpanded = false
-                                        onAddToPlaylist(track)
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Edit Metadata") },
-                                    leadingIcon = { Icon(Icons.Rounded.EditNote, contentDescription = null) },
-                                    onClick = {
-                                        menuExpanded = false
-                                        onEditTrackMetadata(track)
-                                    }
-                                )
-                                if (target is CollectionDetailTarget.Artist && track.album.isNotBlank()) {
-                                    DropdownMenuItem(
-                                        text = { Text("Go to Album") },
-                                        leadingIcon = { Icon(Icons.Rounded.Album, contentDescription = null) },
-                                        onClick = {
-                                            menuExpanded = false
-                                            onNavigateToAlbum(track.album, track.artist)
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+                    },
+                    showFavoriteButton = true,
+                    onToggleFavorite = { onToggleFavorite(track) },
+                    onClick = { onPlayTracks(matchedTracks, index) },
+                    onOpenTrackMenu = onOpenTrackMenu,
+                    rowTestTag = "collection_track_item_${track.id}"
+                )
             }
         }
     }

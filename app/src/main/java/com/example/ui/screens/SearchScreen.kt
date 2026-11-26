@@ -64,9 +64,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.db.PlaylistWithSummary
 import com.example.data.db.TrackEntity
-import com.example.ui.components.AudioFormatBadge
 import com.example.ui.components.PhotonAlbumArt
-import com.example.ui.components.formatDurationMs
+import com.example.ui.components.TrackRowItem
 import com.example.ui.theme.LocalPhotonColors
 
 enum class SearchScope(val label: String) {
@@ -86,14 +85,14 @@ fun SearchScreen(
     allTracks: List<TrackEntity>,
     recentlyPlayedTracks: List<TrackEntity>,
     playlists: List<PlaylistWithSummary>,
+    currentTrackId: Long?,
+    isPlaying: Boolean,
     onQueryChange: (String) -> Unit,
     onCommitQuery: (String) -> Unit,
     onRemoveHistoryItem: (String) -> Unit,
     onClearHistory: () -> Unit,
     onPlayTracks: (List<TrackEntity>, Int, String) -> Unit,
-    onPlayNext: (TrackEntity) -> Unit,
-    onAddToQueue: (TrackEntity) -> Unit,
-    onInspectTrack: (TrackEntity) -> Unit,
+    onOpenTrackMenu: (TrackEntity) -> Unit,
     onNavigateToAlbum: (String, String?) -> Unit,
     onNavigateToArtist: (String) -> Unit,
     onOpenPlaylist: (Long) -> Unit,
@@ -293,12 +292,13 @@ fun SearchScreen(
                     }
                 } else {
                     itemsIndexed(recentSource, key = { _, t -> "recent_match_${t.id}" }) { idx, track ->
-                        SearchSongResultRow(
+                        TrackRowItem(
                             track = track,
+                            isCurrent = track.id == currentTrackId,
+                            isPlaying = isPlaying,
                             onClick = { onPlayTracks(recentSource, idx, "Recent Matches") },
-                            onPlayNext = { onPlayNext(track) },
-                            onAddToQueue = { onAddToQueue(track) },
-                            onInspect = { onInspectTrack(track) }
+                            onOpenTrackMenu = onOpenTrackMenu,
+                            rowTestTag = "search_recent_row_${track.id}"
                         )
                     }
                 }
@@ -340,15 +340,16 @@ fun SearchScreen(
                         SearchGroupHeader("SONGS", matchedSongs.size)
                     }
                     itemsIndexed(matchedSongs, key = { _, t -> "song_${t.id}" }) { idx, track ->
-                        SearchSongResultRow(
+                        TrackRowItem(
                             track = track,
+                            isCurrent = track.id == currentTrackId,
+                            isPlaying = isPlaying,
                             onClick = {
                                 onCommitQuery(query)
                                 onPlayTracks(matchedSongs, idx, "Search: $query")
                             },
-                            onPlayNext = { onPlayNext(track) },
-                            onAddToQueue = { onAddToQueue(track) },
-                            onInspect = { onInspectTrack(track) }
+                            onOpenTrackMenu = onOpenTrackMenu,
+                            rowTestTag = "search_song_row_${track.id}"
                         )
                     }
                 }
@@ -496,96 +497,3 @@ private fun SearchGroupHeader(title: String, count: Int) {
     )
 }
 
-@Composable
-private fun SearchSongResultRow(
-    track: TrackEntity,
-    onClick: () -> Unit,
-    onPlayNext: () -> Unit,
-    onAddToQueue: () -> Unit,
-    onInspect: () -> Unit
-) {
-    val photonColors = LocalPhotonColors.current
-    var menuExpanded by remember { mutableStateOf(false) }
-
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = photonColors.glassSurface,
-        border = BorderStroke(0.8.dp, photonColors.cardBorder.copy(alpha = 0.65f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            PhotonAlbumArt(
-                artworkUri = track.artworkUri,
-                contentDescription = track.title,
-                size = 46.dp,
-                cornerRadius = 10.dp
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = track.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    AudioFormatBadge(format = track.format)
-                    Text(
-                        text = "${track.artist} · ${formatDurationMs(track.durationMs)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Box {
-                IconButton(
-                    onClick = { menuExpanded = true },
-                    modifier = Modifier.testTag("search_row_overflow_${track.id}")
-                ) {
-                    Icon(Icons.Rounded.MoreVert, contentDescription = "Track options")
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Play Next") },
-                        leadingIcon = { Icon(Icons.Rounded.QueuePlayNext, contentDescription = null) },
-                        onClick = {
-                            menuExpanded = false
-                            onPlayNext()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Add to Queue") },
-                        leadingIcon = { Icon(Icons.Rounded.MusicNote, contentDescription = null) },
-                        onClick = {
-                            menuExpanded = false
-                            onAddToQueue()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Inspect / Edit Tags") },
-                        leadingIcon = { Icon(Icons.Rounded.EditNote, contentDescription = null) },
-                        onClick = {
-                            menuExpanded = false
-                            onInspect()
-                        }
-                    )
-                }
-            }
-        }
-    }
-}

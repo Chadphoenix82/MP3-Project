@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import android.os.Build
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -36,6 +38,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -70,6 +73,7 @@ fun WaveformScrubber(
 ) {
     val photonColors = LocalPhotonColors.current
     val haptic = LocalHapticFeedback.current
+    val view = LocalView.current
     val density = LocalDensity.current
 
     val safeDuration = durationMs.coerceAtLeast(1000L)
@@ -109,7 +113,14 @@ fun WaveformScrubber(
             val barIdx = (fraction * (WAVEFORM_BAR_COUNT - 1)).roundToInt()
             if (barIdx != lastTickBar && abs(barIdx - lastTickBar) >= 2) {
                 lastTickBar = barIdx
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                val tickConstant = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
+                } else {
+                    HapticFeedbackConstants.CLOCK_TICK
+                }
+                if (!view.performHapticFeedback(tickConstant)) {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                }
             }
         }
     }
@@ -127,7 +138,9 @@ fun WaveformScrubber(
                 detectTapGestures { offset ->
                     val fraction = (offset.x / size.width.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
                     val targetMs = (fraction * safeDuration).toLong().coerceIn(0L, safeDuration)
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    if (!view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
                     onSeekCommit(targetMs)
                 }
             }
@@ -137,7 +150,9 @@ fun WaveformScrubber(
                         isScrubbing = true
                         lastTickBar = -1
                         updateFromX(offset.x, triggerTick = false)
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (!view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
                     },
                     onHorizontalDrag = { change, _ ->
                         change.consume()
@@ -147,6 +162,14 @@ fun WaveformScrubber(
                         val commitMs = (scrubFraction * safeDuration).toLong().coerceIn(0L, safeDuration)
                         isScrubbing = false
                         onSeekPreview(null)
+                        val confirmConstant = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            HapticFeedbackConstants.CONFIRM
+                        } else {
+                            HapticFeedbackConstants.CONTEXT_CLICK
+                        }
+                        if (!view.performHapticFeedback(confirmConstant)) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
                         onSeekCommit(commitMs)
                     },
                     onDragCancel = {

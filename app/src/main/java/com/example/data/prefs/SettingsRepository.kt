@@ -100,7 +100,9 @@ data class AppSettings(
     val searchHistory: List<String> = emptyList(),
     val minTrackDurationSec: Int = 0,
     val gaplessPlaybackEnabled: Boolean = true,
-    val deckStylePreset: DeckStylePreset? = null
+    val deckStylePreset: DeckStylePreset? = null,
+    val smartShuffleGenres: Set<String> = emptySet(),
+    val smartShuffleRecentWeight: Float = 0.55f
 ) {
     fun toStudioDspConfig(trackGainOffsetDb: Float = 0f): StudioDspConfig = StudioDspConfig(
         preAmpDb = preAmpDb,
@@ -188,6 +190,8 @@ class SettingsRepository(private val context: Context) {
         val MIN_TRACK_DURATION_SEC = intPreferencesKey("min_track_duration_sec")
         val GAPLESS_PLAYBACK = booleanPreferencesKey("gapless_playback")
         val DECK_STYLE_PRESET = stringPreferencesKey("deck_style_preset")
+        val SMART_SHUFFLE_GENRES_JSON = stringPreferencesKey("smart_shuffle_genres_json")
+        val SMART_SHUFFLE_RECENT_WEIGHT = floatPreferencesKey("smart_shuffle_recent_weight")
     }
 
     val settingsFlow: Flow<AppSettings> = context.photonDataStore.data.map { prefs ->
@@ -304,7 +308,9 @@ class SettingsRepository(private val context: Context) {
             searchHistory = parseSearchHistoryJson(prefs[Keys.SEARCH_HISTORY_JSON]),
             minTrackDurationSec = (prefs[Keys.MIN_TRACK_DURATION_SEC] ?: 0).coerceIn(0, 180),
             gaplessPlaybackEnabled = prefs[Keys.GAPLESS_PLAYBACK] ?: true,
-            deckStylePreset = deckStylePreset
+            deckStylePreset = deckStylePreset,
+            smartShuffleGenres = parseStringListJson(prefs[Keys.SMART_SHUFFLE_GENRES_JSON]).toSet(),
+            smartShuffleRecentWeight = (prefs[Keys.SMART_SHUFFLE_RECENT_WEIGHT] ?: 0.55f).coerceIn(0.20f, 0.85f)
         )
     }
 
@@ -666,7 +672,50 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    private fun parseSearchHistoryJson(raw: String?): List<String> {
+    suspend fun toggleSmartShuffleGenre(rawGenre: String) {
+        val cleaned = rawGenre.trim().take(36)
+        if (cleaned.isEmpty()) return
+        context.photonDataStore.edit { prefs ->
+            val current = parseStringListJson(prefs[Keys.SMART_SHUFFLE_GENRES_JSON])
+            val exists = current.any { it.equals(cleaned, ignoreCase = true) }
+            val updated = if (exists) {
+                current.filterNot { it.equals(cleaned, ignoreCase = true) }
+            } else {
+                (current + cleaned).take(MAX_SMART_SHUFFLE_GENRES)
+            }
+            prefs[Keys.SMART_SHUFFLE_GENRES_JSON] = serializeStringListJson(updated)
+        }
+    }
+
+    suspend fun addSmartShuffleGenre(rawGenre: String) {
+        val cleaned = rawGenre.trim().take(36)
+        if (cleaned.isEmpty()) return
+        context.photonDataStore.edit { prefs ->
+            val current = parseStringListJson(prefs[Keys.SMART_SHUFFLE_GENRES_JSON])
+            if (current.none { it.equals(cleaned, ignoreCase = true) }) {
+                val updated = (current + cleaned).take(MAX_SMART_SHUFFLE_GENRES)
+                prefs[Keys.SMART_SHUFFLE_GENRES_JSON] = serializeStringListJson(updated)
+            }
+        }
+    }
+
+    suspend fun clearSmartShuffleGenres() {
+        context.photonDataStore.edit { prefs ->
+            prefs.remove(Keys.SMART_SHUFFLE_GENRES_JSON)
+        }
+    }
+
+    suspend fun setSmartShuffleRecentWeight(weight: Float) {
+        context.photonDataStore.edit { prefs ->
+            prefs[Keys.SMART_SHUFFLE_RECENT_WEIGHT] = weight.coerceIn(0.20f, 0.85f)
+        }
+    }
+
+    private fun parseSearchHistoryJson(raw: String?): List<String> = parseStringListJson(raw)
+
+    private fun serializeSearchHistoryJson(items: List<String>): String = serializeStringListJson(items)
+
+    private fun parseStringListJson(raw: String?): List<String> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching {
             val array = JSONArray(raw)
@@ -679,7 +728,7 @@ class SettingsRepository(private val context: Context) {
         }.getOrDefault(emptyList())
     }
 
-    private fun serializeSearchHistoryJson(items: List<String>): String {
+    private fun serializeStringListJson(items: List<String>): String {
         val array = JSONArray()
         items.forEach { array.put(it) }
         return array.toString()
@@ -736,6 +785,7 @@ class SettingsRepository(private val context: Context) {
     companion object {
         private const val MAX_SEARCH_HISTORY = 12
         private const val MAX_CUSTOM_PRESETS = 16
+        private const val MAX_SMART_SHUFFLE_GENRES = 20
     }
 
     suspend fun resetToDefaults() {

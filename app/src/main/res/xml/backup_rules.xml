@@ -1,13 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <!-- Include Room database (library tags, playlists, watched folders, history) -->
+    <!-- Allowlist mode: include Room database (playlists, library tags, watched folders, history)
+         and DataStore preferences only. All other app files (cached artwork in covers/,
+         wallpapers/, PhotonWatchedMusic/, PhotonStudioWavs/, wav_exports/) are automatically excluded. -->
     <include domain="database" path="photon_audio.db" />
-    <!-- Include DataStore user preferences (theme, typography, EQ presets, audio lab settings) -->
     <include domain="file" path="datastore/photon_audio_settings.preferences_pb" />
-    <!-- Exclude cached artwork, wallpapers, and generated/temporary WAV studio exports -->
-    <exclude domain="file" path="covers" />
-    <exclude domain="file" path="wallpapers" />
-    <exclude domain="file" path="PhotonWatchedMusic" />
-    <exclude domain="file" path="PhotonStudioWavs" />
-    <exclude domain="file" path="wav_exports" />
 </full-backup-content>
